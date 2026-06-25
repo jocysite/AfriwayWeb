@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Afriway Downloader - YouTube Edition</title>
+    <title>Afriway Downloader</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -25,22 +25,40 @@
             </div>
 
             <nav class="sidebar-nav">
-                <button class="nav-item active">All Downloads</button>
-                <button class="nav-item">Video</button>
-                <button class="nav-item">Audio</button>
-                <button class="nav-item">Playlists</button>
-                <button class="nav-item">History</button>
+                <button class="nav-item" data-tab="all">📥 All Downloads</button>
+                <button class="nav-item active" data-tab="youtube">▶️ YouTube</button>
+                <button class="nav-item" data-tab="torrent">🔗 Torrent</button>
+                <button class="nav-item" data-tab="others">🌐 Others</button>
             </nav>
 
             <div class="workflow-panel">
                 <h2>🌍 The Ubuntu Way</h2>
                 <p class="workflow-motto">"I am because we are" — download smarter together.</p>
                 <ol>
-                    <li>Paste the YouTube URL.</li>
-                    <li>Fetch metadata and choose quality.</li>
+                    <li>Paste the URL or magnet link.</li>
+                    <li>Fetch or analyze — choose quality.</li>
                     <li>Start the download.</li>
                     <li>Track progress in real time.</li>
                 </ol>
+            </div>
+
+            <div class="support-panel">
+                <p class="support-heading">☕ Support Afriway</p>
+                <p class="support-tagline">If this app saves you time, buy me a coffee!</p>
+                <div class="qr-wrapper">
+                    <img src="{{ url_for('static', filename='qr-coffee.png') }}"
+                         alt="Buy Me a Coffee QR Code"
+                         class="qr-img"
+                         onerror="this.parentElement.style.display='none'">
+                </div>
+                <a href="https://buymeacoffee.com/yosefmulatu"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="btn-coffee">
+                    ☕ Buy Me a Coffee
+                </a>
+                <span class="support-url">buymeacoffee.com/yosefmulatu</span>
+                <span class="dev-credit">Developed by: Yosef Mulatu</span>
             </div>
 
             <div class="sidebar-footer">
@@ -61,164 +79,292 @@
                     <h2>🌍 <span class="africa-text">African-Inspired</span> Download Experience</h2>
                 </div>
                 <div class="topbar-actions">
-                    <span class="status-pill">⚡ Ready</span>
+                    <span class="status-pill" id="statusPill">⚡ Ready</span>
                 </div>
             </header>
 
-            <section class="status-grid">
-                <article class="status-card">
-                    <div class="status-card-title">Queue</div>
-                    <div class="status-card-value">1 task</div>
-                    <div class="status-card-note">Prepare new downloads quickly.</div>
-                </article>
-                <article class="status-card">
-                    <div class="status-card-title">Current</div>
-                    <div class="status-card-value">Awaiting URL</div>
-                    <div class="status-card-note">Paste a video or playlist link.</div>
-                </article>
-                <article class="status-card">
-                    <div class="status-card-title">Spirit</div>
-                    <div class="status-card-value">Harambee</div>
-                    <div class="status-card-note">"Let's pull together" — Swahili spirit of teamwork.</div>
-                </article>
+            <!-- Download location — persistent across all tabs -->
+            <section class="card location-bar-card">
+                <div class="location-bar-inner">
+                    <svg class="location-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    <span class="location-label">Save to:</span>
+                    <input type="text" id="downloadPath" class="input-field location-input" placeholder="Loading...">
+                    <button id="browsePathBtn" type="button" class="btn btn-secondary btn-apply">📂 Browse</button>
+                    <button id="savePathBtn" type="button" class="btn btn-primary btn-apply">Apply</button>
+                </div>
             </section>
 
-            <section class="card fetch-card">
-                <div class="card-header">
-                    <div>
-                        <h3>Step 1 — Enter URL</h3>
-                        <p>Enter a YouTube URL to fetch video or playlist details.</p>
-                    </div>
+            <!-- ══════════════════════════════════════
+                 ALL DOWNLOADS TAB
+            ══════════════════════════════════════ -->
+            <div class="tab-pane" id="pane-all">
+                <div class="queue-toolbar">
+                    <input type="text" class="search-input" id="search-all" placeholder="🔍  Search all downloads...">
+                    <select class="filter-select" id="filter-type-all" title="Filter by type">
+                        <option value="">All Types</option>
+                        <option value="youtube">YouTube</option>
+                        <option value="torrent">Torrent</option>
+                        <option value="direct">Direct File</option>
+                        <option value="video">Other Video</option>
+                    </select>
+                    <select class="filter-select" id="filter-status-all" title="Filter by status">
+                        <option value="">All Status</option>
+                        <option value="downloading">Active</option>
+                        <option value="completed">Completed</option>
+                        <option value="error">Failed</option>
+                    </select>
                 </div>
-                <div class="card-body">
-                    <div class="input-group">
-                        <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=..."
-                            class="input-field">
-                        <button id="fetchBtn" class="btn btn-primary">
-                            <span class="btn-text">Fetch URL</span>
+                <div class="download-queue" id="queue-all">
+                    <div class="queue-empty">No downloads yet. Start from YouTube, Torrent, or Others tab.</div>
+                </div>
+            </div>
+
+            <!-- ══════════════════════════════════════
+                 YOUTUBE TAB
+            ══════════════════════════════════════ -->
+            <div class="tab-pane active" id="pane-youtube">
+
+                <section class="card fetch-card">
+                    <div class="card-header">
+                        <div>
+                            <h3>Step 1 — Enter URL</h3>
+                            <p>Enter a YouTube URL to fetch video or playlist details.</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group">
+                            <input type="text" id="urlInput"
+                                placeholder="https://www.youtube.com/watch?v=..."
+                                class="input-field">
+                            <button id="fetchBtn" type="button" class="btn btn-primary">
+                                <span class="btn-text">Fetch URL</span>
+                                <span class="spinner hidden"></span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="infoSection" class="card hidden">
+                    <div class="card-header">
+                        <div>
+                            <h3>Step 2 — Video Details</h3>
+                            <p>Review the selected media before downloading.</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="videoInfo" class="video-info"></div>
+                    </div>
+                </section>
+
+                <section class="content-grid">
+                    <section id="typeSection" class="card hidden">
+                        <div class="card-header">
+                            <div>
+                                <h3>Step 3 — Download Type</h3>
+                                <p>Choose between video or audio only.</p>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="radio-group">
+                                <label class="radio-label">
+                                    <input type="radio" name="downloadType" value="video" checked>
+                                    <span class="radio-custom"></span>
+                                    <div class="radio-content">
+                                        <span class="radio-title">Video + Audio</span>
+                                        <span class="radio-desc">MP4 file — full experience</span>
+                                    </div>
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="downloadType" value="audio">
+                                    <span class="radio-custom"></span>
+                                    <div class="radio-content">
+                                        <span class="radio-title">Audio Only</span>
+                                        <span class="radio-desc">MP3 file — just the sound</span>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="qualitySection" class="card hidden">
+                        <div class="card-header">
+                            <div>
+                                <h3>Step 4 — Quality Selection</h3>
+                                <p>Pick the best video and audio formats for the download.</p>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="quality-grid">
+                                <div id="videoQualityContainer" class="quality-container">
+                                    <h4 class="quality-title">🎬 Video Quality</h4>
+                                    <div id="videoFormats" class="format-list"></div>
+                                </div>
+                                <div id="audioQualityContainer" class="quality-container">
+                                    <h4 class="quality-title">🎵 Audio Quality</h4>
+                                    <div id="audioFormats" class="format-list"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </section>
+
+                <section id="playlistSection" class="card hidden">
+                    <div class="card-header">
+                        <div>
+                            <h3>Step 5 — Playlist Items</h3>
+                            <p>Select which playlist videos should be downloaded.</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="playlist-controls">
+                            <button type="button" class="btn-small" onclick="selectAllVideos()">Select All</button>
+                            <button type="button" class="btn-small" onclick="deselectAllVideos()">Deselect All</button>
+                            <div id="selectedCount" class="selected-count"></div>
+                        </div>
+                        <div id="playlistVideos" class="playlist-videos-list"></div>
+                    </div>
+                </section>
+
+                <section class="card hidden" id="downloadSection">
+                    <div class="card-header">
+                        <div>
+                            <h3>Step 6 — Download</h3>
+                            <p>Start the download with your chosen settings.</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <button id="downloadBtn" type="button" class="btn btn-download">
+                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span class="btn-text">Download Now</span>
                             <span class="spinner hidden"></span>
                         </button>
                     </div>
-                </div>
-            </section>
+                </section>
 
-            <section id="infoSection" class="card hidden">
-                <div class="card-header">
-                    <div>
-                        <h3>Step 2 — Video Details</h3>
-                        <p>Review the selected media before downloading.</p>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div id="videoInfo" class="video-info"></div>
-                </div>
-            </section>
-
-            <section class="content-grid">
-                <section id="typeSection" class="card hidden">
+                <section id="progressSection" class="card hidden">
                     <div class="card-header">
                         <div>
-                        <h3>Step 3 — Download Type</h3>
-                        <p>Choose between video or audio only.</p>
+                            <h3>Progress Overview</h3>
+                            <p>Track the active download live.</p>
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="radio-group">
-                            <label class="radio-label">
-                                <input type="radio" name="downloadType" value="video" checked>
-                                <span class="radio-custom"></span>
-                                <div class="radio-content">
-                                    <span class="radio-title">Video + Audio</span>
-                                    <span class="radio-desc">MP4 file — full experience</span>
-                                </div>
-                            </label>
-                            <label class="radio-label">
-                                <input type="radio" name="downloadType" value="audio">
-                                <span class="radio-custom"></span>
-                                <div class="radio-content">
-                                    <span class="radio-title">Audio Only</span>
-                                    <span class="radio-desc">MP3 file — just the sound</span>
-                                </div>
-                            </label>
+                        <div class="progress-container">
+                            <div class="progress-bar">
+                                <div id="progressFill" class="progress-fill"></div>
+                            </div>
+                            <div id="progressText" class="progress-text">Preparing download...</div>
                         </div>
                     </div>
                 </section>
 
-                <section id="qualitySection" class="card hidden">
+                <!-- YouTube download history -->
+                <div class="queue-toolbar">
+                    <input type="text" class="search-input" id="search-youtube"
+                        placeholder="🔍  Search YouTube downloads...">
+                </div>
+                <div class="download-queue" id="queue-youtube"></div>
+            </div>
+
+            <!-- ══════════════════════════════════════
+                 TORRENT TAB
+            ══════════════════════════════════════ -->
+            <div class="tab-pane" id="pane-torrent">
+
+                <section class="card">
                     <div class="card-header">
                         <div>
-                        <h3>Step 4 — Quality Selection</h3>
-                        <p>Pick the best video and audio formats for the download.</p>
+                            <h3>🔗 Add Torrent</h3>
+                            <p>Paste a magnet link or URL, or upload a <code>.torrent</code> file directly.</p>
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="quality-grid">
-                            <div id="videoQualityContainer" class="quality-container">
-                                <h4 class="quality-title">🎬 Video Quality</h4>
-                                <div id="videoFormats" class="format-list"></div>
-                            </div>
-                            <div class="quality-container">
-                                <h4 class="quality-title">🎵 Audio Quality</h4>
-                                <div id="audioFormats" class="format-list"></div>
-                            </div>
+                        <div class="input-group">
+                            <input type="text" id="torrentInput"
+                                placeholder="magnet:?xt=urn:btih:...   or   https://example.com/file.torrent"
+                                class="input-field">
+                            <button id="addTorrentBtn" type="button" class="btn btn-primary">
+                                <span class="btn-text">Start Download</span>
+                                <span class="spinner hidden"></span>
+                            </button>
+                        </div>
+                        <div class="or-divider"><span>or upload a .torrent file</span></div>
+                        <div class="file-upload-zone">
+                            <input type="file" id="torrentFileInput" accept=".torrent" class="hidden">
+                            <label for="torrentFileInput" class="btn-file-upload">
+                                📂 Choose .torrent file
+                            </label>
+                            <span id="torrentFileName" class="file-name-hint">No file selected</span>
                         </div>
                     </div>
                 </section>
-            </section>
 
-            <section id="playlistSection" class="card hidden">
-                <div class="card-header">
-                    <div>
-                        <h3>Step 5 — Playlist Items</h3>
-                        <p>Select which playlist videos should be downloaded.</p>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div class="playlist-controls">
-                        <button class="btn-small" onclick="selectAllVideos()">Select All</button>
-                        <button class="btn-small" onclick="deselectAllVideos()">Deselect All</button>
-                        <div id="selectedCount" class="selected-count"></div>
-                    </div>
-                    <div id="playlistVideos" class="playlist-videos-list"></div>
-                </div>
-            </section>
+                <section id="torrentInfoSection" class="card hidden">
+                    <div class="card-header"><h3>Torrent Status</h3></div>
+                    <div class="card-body" id="torrentInfoBody"></div>
+                </section>
 
-            <section class="card hidden" id="downloadSection">
-                <div class="card-header">
-                    <div>
-                        <h3>Step 6 — Download</h3>
-                        <p>Start the download with your chosen settings.</p>
-                    </div>
+                <div class="queue-toolbar">
+                    <input type="text" class="search-input" id="search-torrent"
+                        placeholder="🔍  Search torrent downloads...">
                 </div>
-                <div class="card-body">
-                    <button id="downloadBtn" class="btn btn-download">
-                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="7 10 12 15 17 10"></polyline>
-                            <line x1="12" y1="15" x2="12" y2="3"></line>
-                        </svg>
-                        <span class="btn-text">Download Now</span>
-                        <span class="spinner hidden"></span>
-                    </button>
-                </div>
-            </section>
+                <div class="download-queue" id="queue-torrent"></div>
+            </div>
 
-            <section id="progressSection" class="card hidden">
-                <div class="card-header">
-                    <div>
-                        <h3>Progress Overview</h3>
-                        <p>Track the active download live.</p>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div class="progress-container">
-                        <div class="progress-bar">
-                            <div id="progressFill" class="progress-fill"></div>
+            <!-- ══════════════════════════════════════
+                 OTHERS TAB
+            ══════════════════════════════════════ -->
+            <div class="tab-pane" id="pane-others">
+
+                <section class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3>🌐 Download from URL</h3>
+                            <p>Direct files (.exe, images, .zip…) or videos from 1 000+ sites via yt-dlp.</p>
                         </div>
-                        <div id="progressText" class="progress-text">Preparing download...</div>
                     </div>
+                    <div class="card-body">
+                        <div class="input-group">
+                            <input type="text" id="othersInput"
+                                placeholder="https://example.com/file.exe   or   https://vimeo.com/..."
+                                class="input-field">
+                            <button id="analyzeOthersBtn" type="button" class="btn btn-primary">
+                                <span class="btn-text">Analyze URL</span>
+                                <span class="spinner hidden"></span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="othersInfoSection" class="card hidden">
+                    <div class="card-header"><h3>File Info</h3></div>
+                    <div class="card-body" id="othersInfoBody"></div>
+                    <div class="card-body">
+                        <button id="downloadOthersBtn" type="button" class="btn btn-download">
+                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span class="btn-text">Download</span>
+                            <span class="spinner hidden"></span>
+                        </button>
+                    </div>
+                </section>
+
+                <div class="queue-toolbar">
+                    <input type="text" class="search-input" id="search-others"
+                        placeholder="🔍  Search other downloads...">
                 </div>
-            </section>
+                <div class="download-queue" id="queue-others"></div>
+            </div>
+
         </main>
     </div>
 

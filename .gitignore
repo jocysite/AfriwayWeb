@@ -6,6 +6,10 @@ __pycache__/
 .env
 venv/
 env/
+.venv/
+
+# Generated at runtime — not committed
+static/qr-coffee.png
 
 # Node / Electron
 node_modules/
