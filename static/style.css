@@ -493,6 +493,23 @@ body {
   box-shadow: 0 10px 35px rgba(212, 175, 55, 0.35);
 }
 
+.btn-secondary {
+  background: transparent;
+  color: var(--gold-brand);
+  border: 1.5px solid var(--gold-brand);
+  box-shadow: none;
+  cursor: pointer;
+}
+.btn-secondary:hover {
+  background: rgba(212, 175, 55, 0.10);
+}
+.torrent-pick-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
 .btn-download {
   width: auto;
   min-width: 200px;
@@ -913,6 +930,29 @@ body {
    Download location bar
 ══════════════════════════════════════ */
 .location-bar-card { flex-shrink: 0; }
+
+/* ══════════════════════════════════════
+   Global URL bar (always visible)
+══════════════════════════════════════ */
+.url-bar-card {
+  flex-shrink: 0;
+  border-color: var(--gold-brand);
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.18);
+}
+.url-bar-card .card-body {
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.url-bar-input-row { display: flex; }
+.url-bar-input-row .input-field { flex: 1; }
+.url-bar-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.url-action-btn { flex: 1 1 auto; min-width: 10rem; }
 
 .location-bar-inner {
   display: flex;

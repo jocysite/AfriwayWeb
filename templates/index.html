@@ -27,8 +27,8 @@
             </div>
 
             <nav class="sidebar-nav">
-                <button class="nav-item" data-tab="all">📥 All Downloads</button>
-                <button class="nav-item active" data-tab="youtube">▶️ YouTube</button>
+                <button class="nav-item active" data-tab="all">📥 All Downloads</button>
+                <button class="nav-item" data-tab="youtube">▶️ YouTube</button>
                 <button class="nav-item" data-tab="torrent">🔗 Torrent</button>
                 <button class="nav-item" data-tab="others">🌐 Others</button>
             </nav>
@@ -132,9 +132,32 @@
             </section>
 
             <!-- ══════════════════════════════════════
+                 GLOBAL URL BAR (always visible)
+            ══════════════════════════════════════ -->
+            <section class="card url-bar-card">
+                <div class="card-body">
+                    <div class="url-bar-input-row">
+                        <input type="text" id="globalUrlInput"
+                            placeholder="Paste any URL — YouTube, magnet link, direct file, or video site..."
+                            class="input-field">
+                    </div>
+                    <div class="url-bar-btn-row">
+                        <button id="globalDownloadBtn" type="button" class="btn btn-primary url-action-btn">
+                            <span class="btn-text">⬇ Download</span>
+                            <span class="spinner hidden"></span>
+                        </button>
+                        <input type="file" id="globalTorrentFileInput" accept=".torrent" class="hidden">
+                        <label for="globalTorrentFileInput" class="btn btn-secondary url-action-btn torrent-pick-btn">
+                            📂 Choose .torrent file
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ══════════════════════════════════════
                  ALL DOWNLOADS TAB
             ══════════════════════════════════════ -->
-            <div class="tab-pane" id="pane-all">
+            <div class="tab-pane active" id="pane-all">
                 <div class="queue-toolbar">
                     <input type="text" class="search-input" id="search-all" placeholder="🔍  Search all downloads...">
                     <select class="filter-select" id="filter-type-all" title="Filter by type">
@@ -169,27 +192,7 @@
             <!-- ══════════════════════════════════════
                  YOUTUBE TAB
             ══════════════════════════════════════ -->
-            <div class="tab-pane active" id="pane-youtube">
-
-                <section class="card fetch-card">
-                    <div class="card-header">
-                        <div>
-                            <h3>Step 1 — Enter URL</h3>
-                            <p>Enter a YouTube URL to fetch video or playlist details.</p>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="input-group">
-                            <input type="text" id="urlInput"
-                                placeholder="https://www.youtube.com/watch?v=..."
-                                class="input-field">
-                            <button id="fetchBtn" type="button" class="btn btn-primary">
-                                <span class="btn-text">Fetch URL</span>
-                                <span class="spinner hidden"></span>
-                            </button>
-                        </div>
-                    </div>
-                </section>
+            <div class="tab-pane" id="pane-youtube">
 
                 <section id="infoSection" class="card hidden">
                     <div class="card-header">
@@ -333,21 +336,11 @@
                 <section class="card">
                     <div class="card-header">
                         <div>
-                            <h3>🔗 Add Torrent</h3>
-                            <p>Paste a magnet link or URL, or upload a <code>.torrent</code> file directly.</p>
+                            <h3>📂 Upload .torrent file</h3>
+                            <p>Or paste a magnet link / .torrent URL in the bar above and click <strong>Start Torrent</strong>.</p>
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="input-group">
-                            <input type="text" id="torrentInput"
-                                placeholder="magnet:?xt=urn:btih:...   or   https://example.com/file.torrent"
-                                class="input-field">
-                            <button id="addTorrentBtn" type="button" class="btn btn-primary">
-                                <span class="btn-text">Start Download</span>
-                                <span class="spinner hidden"></span>
-                            </button>
-                        </div>
-                        <div class="or-divider"><span>or upload a .torrent file</span></div>
                         <div class="file-upload-zone">
                             <input type="file" id="torrentFileInput" accept=".torrent" class="hidden">
                             <label for="torrentFileInput" class="btn-file-upload">
@@ -382,26 +375,6 @@
                  OTHERS TAB
             ══════════════════════════════════════ -->
             <div class="tab-pane" id="pane-others">
-
-                <section class="card">
-                    <div class="card-header">
-                        <div>
-                            <h3>🌐 Download from URL</h3>
-                            <p>Direct files (.exe, images, .zip…) or videos from 1 000+ sites via yt-dlp.</p>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="input-group">
-                            <input type="text" id="othersInput"
-                                placeholder="https://example.com/file.exe   or   https://vimeo.com/..."
-                                class="input-field">
-                            <button id="analyzeOthersBtn" type="button" class="btn btn-primary">
-                                <span class="btn-text">Analyze URL</span>
-                                <span class="spinner hidden"></span>
-                            </button>
-                        </div>
-                    </div>
-                </section>
 
                 <section id="othersInfoSection" class="card hidden">
                     <div class="card-header"><h3>File Info</h3></div>

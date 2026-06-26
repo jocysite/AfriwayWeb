@@ -7,14 +7,16 @@ let selectedAudioFormat = null;
 let playlistData = [];
 let skippedIndices = new Set();
 let othersAnalyzedData = null;
+let fetchedUrl = "";
 let queuePollInterval = null;
 const selectedSessions = new Set(); // session IDs checked via queue-item checkboxes
 
 // ══════════════════════════════════════════════════
 // DOM — YouTube
 // ══════════════════════════════════════════════════
-const urlInput = document.getElementById("urlInput");
-const fetchBtn = document.getElementById("fetchBtn");
+const globalUrlInput = document.getElementById("globalUrlInput");
+const globalDownloadBtn = document.getElementById("globalDownloadBtn");
+const globalTorrentFileInput = document.getElementById("globalTorrentFileInput");
 const infoSection = document.getElementById("infoSection");
 const videoInfo = document.getElementById("videoInfo");
 const typeSection = document.getElementById("typeSection");
@@ -36,10 +38,6 @@ const playlistVideosContainer = document.getElementById("playlistVideos");
 const partitionSelect = document.getElementById("partitionSelect");
 const savePartitionBtn = document.getElementById("savePartitionBtn");
 const afriwayPathPreview = document.getElementById("afriwayPathPreview");
-const addTorrentBtn = document.getElementById("addTorrentBtn");
-const torrentInput = document.getElementById("torrentInput");
-const analyzeOthersBtn = document.getElementById("analyzeOthersBtn");
-const othersInput = document.getElementById("othersInput");
 const downloadOthersBtn = document.getElementById("downloadOthersBtn");
 
 // ══════════════════════════════════════════════════
@@ -407,8 +405,6 @@ function escHtml(str) {
 // ══════════════════════════════════════════════════
 // Torrent tab
 // ══════════════════════════════════════════════════
-addTorrentBtn.addEventListener("click", startTorrentDownload);
-torrentInput.addEventListener("keypress", e => { if (e.key === "Enter") startTorrentDownload(); });
 
 const torrentFileInput = document.getElementById("torrentFileInput");
 const torrentFileName  = document.getElementById("torrentFileName");
@@ -455,27 +451,11 @@ async function uploadTorrentFile(file) {
 }
 
 async function startTorrentDownload() {
-  const url = torrentInput.value.trim();
+  const url = globalUrlInput.value.trim();
   if (!url) { showError("Please enter a URL"); return; }
+  switchToTab("torrent");
 
-  if (isYouTubeUrl(url)) {
-    switchToTab("youtube");
-    urlInput.value = url;
-    torrentInput.value = "";
-    swalToast.fire({ icon: "info", title: "Moved to YouTube tab" });
-    fetchVideoInfo();
-    return;
-  }
-  if (!isTorrentUrl(url)) {
-    switchToTab("others");
-    othersInput.value = url;
-    torrentInput.value = "";
-    swalToast.fire({ icon: "info", title: "Moved to Others tab" });
-    analyzeOthersUrl();
-    return;
-  }
-
-  setLoading(addTorrentBtn, true);
+  setLoading(globalDownloadBtn, true);
   try {
     const res = await fetch("/api/download-torrent", {
       method: "POST",
@@ -484,7 +464,7 @@ async function startTorrentDownload() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Torrent failed");
-    torrentInput.value = "";
+    globalUrlInput.value = "";
     const section = document.getElementById("torrentInfoSection");
     const body = document.getElementById("torrentInfoBody");
     section.classList.remove("hidden");
@@ -502,39 +482,21 @@ async function startTorrentDownload() {
   } catch (e) {
     showError(e.message);
   } finally {
-    setLoading(addTorrentBtn, false);
+    setLoading(globalDownloadBtn, false);
   }
 }
 
 // ══════════════════════════════════════════════════
 // Others tab
 // ══════════════════════════════════════════════════
-analyzeOthersBtn.addEventListener("click", analyzeOthersUrl);
-othersInput.addEventListener("keypress", e => { if (e.key === "Enter") analyzeOthersUrl(); });
 downloadOthersBtn.addEventListener("click", startOthersDownload);
 
 async function analyzeOthersUrl() {
-  const url = othersInput.value.trim();
+  const url = globalUrlInput.value.trim();
   if (!url) { showError("Please enter a URL"); return; }
+  switchToTab("others");
 
-  if (isYouTubeUrl(url)) {
-    switchToTab("youtube");
-    urlInput.value = url;
-    othersInput.value = "";
-    swalToast.fire({ icon: "info", title: "Moved to YouTube tab" });
-    fetchVideoInfo();
-    return;
-  }
-  if (isTorrentUrl(url)) {
-    switchToTab("torrent");
-    torrentInput.value = url;
-    othersInput.value = "";
-    swalToast.fire({ icon: "info", title: "Moved to Torrent tab" });
-    startTorrentDownload();
-    return;
-  }
-
-  setLoading(analyzeOthersBtn, true);
+  setLoading(globalDownloadBtn, true);
   const section = document.getElementById("othersInfoSection");
   const body = document.getElementById("othersInfoBody");
   section.classList.add("hidden");
@@ -558,13 +520,13 @@ async function analyzeOthersUrl() {
   } catch (e) {
     showError(e.message);
   } finally {
-    setLoading(analyzeOthersBtn, false);
+    setLoading(globalDownloadBtn, false);
   }
 }
 
 async function startOthersDownload() {
   if (!othersAnalyzedData) return;
-  const url = othersInput.value.trim();
+  const url = globalUrlInput.value.trim();
   setLoading(downloadOthersBtn, true);
   try {
     const endpoint = othersAnalyzedData.type === "video"
@@ -587,12 +549,36 @@ async function startOthersDownload() {
 }
 
 // ══════════════════════════════════════════════════
+// Global download handler
+// ══════════════════════════════════════════════════
+function handleGlobalDownload() {
+  const url = globalUrlInput.value.trim();
+  if (!url) { showError("Please enter a URL"); return; }
+  if (isYouTubeUrl(url)) fetchVideoInfo();
+  else if (isTorrentUrl(url)) startTorrentDownload();
+  else analyzeOthersUrl();
+}
+
+globalDownloadBtn.addEventListener("click", handleGlobalDownload);
+globalUrlInput.addEventListener("keypress", (e) => {
+  if (e.key === "Enter") handleGlobalDownload();
+});
+
+globalTorrentFileInput.addEventListener("change", () => {
+  const file = globalTorrentFileInput.files[0];
+  if (!file) return;
+  globalTorrentFileInput.value = "";
+  switchToTab("torrent");
+  const torrentFileName = document.getElementById("torrentFileName");
+  if (torrentFileName) torrentFileName.textContent = file.name;
+  const tabLabel = document.querySelector("label[for='torrentFileInput']");
+  if (tabLabel) tabLabel.classList.add("has-file");
+  uploadTorrentFile(file);
+});
+
+// ══════════════════════════════════════════════════
 // YouTube — fetch and progressive display
 // ══════════════════════════════════════════════════
-fetchBtn.addEventListener("click", fetchVideoInfo);
-urlInput.addEventListener("keypress", (e) => {
-  if (e.key === "Enter") fetchVideoInfo();
-});
 
 document.querySelectorAll('input[name="downloadType"]').forEach((radio) => {
   radio.addEventListener("change", handleDownloadTypeChange);
@@ -601,27 +587,12 @@ document.querySelectorAll('input[name="downloadType"]').forEach((radio) => {
 downloadBtn.addEventListener("click", startDownload);
 
 async function fetchVideoInfo() {
-  const url = urlInput.value.trim();
+  const url = globalUrlInput.value.trim();
   if (!url) { showError("Please enter a URL"); return; }
+  fetchedUrl = url;
+  switchToTab("youtube");
 
-  if (!isYouTubeUrl(url)) {
-    if (isTorrentUrl(url)) {
-      switchToTab("torrent");
-      torrentInput.value = url;
-      urlInput.value = "";
-      swalToast.fire({ icon: "info", title: "Moved to Torrent tab" });
-      startTorrentDownload();
-    } else {
-      switchToTab("others");
-      othersInput.value = url;
-      urlInput.value = "";
-      swalToast.fire({ icon: "info", title: "Moved to Others tab" });
-      analyzeOthersUrl();
-    }
-    return;
-  }
-
-  setLoading(fetchBtn, true);
+  setLoading(globalDownloadBtn, true);
   skippedIndices.clear();
   currentData = null;
   selectedVideoFormat = null;
@@ -653,7 +624,7 @@ async function fetchVideoInfo() {
     if (infoData.formats_ready) {
       displayFormats(infoData);
       downloadBtn.disabled = false;
-      setLoading(fetchBtn, false);
+      setLoading(globalDownloadBtn, false);
     } else {
       const firstVideoUrl = infoData.is_playlist && infoData.videos.length > 0
         ? infoData.videos[0].url : null;
@@ -667,12 +638,12 @@ async function fetchVideoInfo() {
       currentData = { ...currentData, ...formatsData };
       displayFormats(formatsData);
       downloadBtn.disabled = false;
-      setLoading(fetchBtn, false);
+      setLoading(globalDownloadBtn, false);
     }
   } catch (error) {
     showError(error.message);
     hideAllSections();
-    setLoading(fetchBtn, false);
+    setLoading(globalDownloadBtn, false);
   }
 }
 
@@ -853,7 +824,7 @@ async function startDownload() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        url: urlInput.value.trim(),
+        url: fetchedUrl,
         download_type: downloadType,
         video_format_id: selectedVideoFormat,
         audio_format_id: selectedAudioFormat,

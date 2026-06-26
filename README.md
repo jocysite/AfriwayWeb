@@ -25,10 +25,6 @@ A multi-type download manager built with Python and Flask, inspired by the spiri
 - **Copy link** — copies the original source URL to the clipboard
 - **Show in folder** — opens Explorer/Finder at the file's location after completion
 
-### Smart Tab Routing
-
-Paste any URL into any tab and the app detects its type and moves it to the right tab automatically — no error, no friction.
-
 ### Afriway Folder Organisation
 
 Files are automatically sorted by type into a shared `Afriway` folder, similar to how Xender organises downloads:
@@ -125,32 +121,33 @@ Open **http://localhost:5000** in your browser.
 
 ## How to Use
 
+### URL Bar
+
+A single URL field sits at the top of the page, always visible regardless of which tab you are on. Paste any URL there — YouTube, magnet link, direct file, or video site — then switch to the appropriate tab and click its action button.
+
 ### YouTube Tab
 
-1. Paste a YouTube video or playlist URL.
-2. Click **Fetch URL** — loads the title and available formats.
+1. Paste a YouTube URL in the URL bar at the top.
+2. Switch to the **YouTube** tab and click **Fetch URL** — loads the title and available formats.
 3. Choose **Video + Audio** (MP4) or **Audio Only** (MP3).
 4. Select your preferred video and audio quality.
 5. For playlists, uncheck any videos you want to skip.
 6. Click **Download Now** — progress appears in the queue.
 
-> Pasting a non-YouTube URL here will automatically move it to the right tab.
-
 ### Torrent Tab
 
-1. **Paste a magnet link or `.torrent` URL**, then click **Start Download**.
+1. Paste a magnet link or `.torrent` URL in the URL bar.
+2. Switch to the **Torrent** tab and click **Start Download**.
    — OR —
-2. **Upload a `.torrent` file** using the file picker.
+3. **Upload a `.torrent` file** directly using the file picker.
 
-> Requires aria2c. Pasting a non-torrent URL redirects to the correct tab automatically.
+> Requires aria2c.
 
 ### Others Tab
 
-1. Paste any URL — a direct file link, a Vimeo/Twitter/Dailymotion video, or any yt-dlp-supported site.
-2. Click **Analyze URL** — detects file type and shows name/size.
+1. Paste any direct file link or yt-dlp-supported URL (Vimeo, Twitter, Dailymotion…) in the URL bar.
+2. Switch to the **Others** tab and click **Analyze URL** — detects file type and shows name/size.
 3. Click **Download** to start.
-
-> Pasting a YouTube or torrent URL here will automatically redirect to the right tab.
 
 ### Changing the Download Drive
 
