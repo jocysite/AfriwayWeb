@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,157 +8,289 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='AfriwayLogo.ico') }}">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="icon" type="image/webp" href="{{ url_for('static', filename='AfriwayLogo.webp') }}">
 </head>
-
 <body>
-    <div class="app-shell">
-        <aside class="sidebar">
-            <div class="brand-panel">
-                <div class="brand-logo">
-                    <img src="{{ url_for('static', filename='AfriwayLogo.webp') }}" alt="Afriway Downloader" class="logo-img">
-                </div>
-                <div>
-                    <h1>Afriway Downloader</h1>
-                    <p>Proudly African · Boldly Modern</p>
-                </div>
-            </div>
 
-            <nav class="sidebar-nav">
-                <button class="nav-item active" data-tab="all">📥 All Downloads</button>
-                <button class="nav-item" data-tab="youtube">▶️ YouTube</button>
-                <button class="nav-item" data-tab="torrent">🔗 Torrent</button>
-                <button class="nav-item" data-tab="others">🌐 Others</button>
-            </nav>
+<!-- ══════════════════════════════════════════════════
+     SETTINGS / ABOUT MODAL
+══════════════════════════════════════════════════ -->
+<div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Settings and About">
+    <div class="modal-backdrop"></div>
+    <div class="modal-panel">
 
-            <div class="workflow-panel">
-                <h2>🌍 The Ubuntu Way</h2>
-                <p class="workflow-motto">"I am because we are" — download smarter together.</p>
-                <ol>
-                    <li>Paste the URL or magnet link.</li>
-                    <li>Fetch or analyze — choose quality.</li>
-                    <li>Start the download.</li>
-                    <li>Track progress in real time.</li>
-                </ol>
-            </div>
+        <div class="modal-header">
+            <h2>⚙️ Settings &amp; About</h2>
+            <button class="modal-close" onclick="closeSettings()" title="Close">✕</button>
+        </div>
 
-            <div class="support-panel">
-                <p class="support-heading">☕ Support Afriway</p>
-                <p class="support-tagline">If this app saves you time, buy me a coffee!</p>
-                <div class="qr-wrapper">
-                    <img src="{{ url_for('static', filename='qr-coffee.webp') }}"
-                         alt="Buy Me a Coffee QR Code"
-                         class="qr-img"
-                         onerror="this.parentElement.style.display='none'">
-                </div>
-                <a href="https://buymeacoffee.com/yosefmulatu"
-                   target="_blank"
-                   rel="noopener noreferrer"
-                   class="btn-coffee">
-                    ☕ Buy Me a Coffee
-                </a>
-                <span class="support-url">buymeacoffee.com/yosefmulatu</span>
-                <span class="dev-credit">Developed by: Yosef Mulatu</span>
-                <div class="social-links">
-                    <!-- LinkedIn -->
-                    <a href="https://www.linkedin.com/in/yosefmulatu/" target="_blank" rel="noopener noreferrer"
-                       class="social-link social-link--linkedin" title="LinkedIn">
-                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-                        </svg>
-                    </a>
-                    <!-- Facebook -->
-                    <a href="https://web.facebook.com/yosefmulatufb" target="_blank" rel="noopener noreferrer"
-                       class="social-link social-link--facebook" title="Facebook">
-                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d="M24 12.073C24 5.404 18.627 0 12 0S0 5.404 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
-                        </svg>
-                    </a>
-                    <!-- Telegram -->
-                    <a href="https://t.me/jocyJ" target="_blank" rel="noopener noreferrer"
-                       class="social-link social-link--telegram" title="Telegram">
-                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
-                        </svg>
-                    </a>
-                    <!-- Email -->
-                    <a href="mailto:josephmulatu1@gmail.com"
-                       class="social-link social-link--email" title="Email">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <rect x="2" y="4" width="20" height="16" rx="2"/>
-                            <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
-                        </svg>
-                    </a>
-                </div>
-            </div>
+        <div class="modal-body">
 
-            <div class="sidebar-footer">
-                <div class="footer-pattern">
-                    <span class="pattern-bar pattern-red"></span>
-                    <span class="pattern-bar pattern-gold"></span>
-                    <span class="pattern-bar pattern-green"></span>
-                </div>
-                <span>🎨 Inspired by the colours of Africa</span>
-                <span>🌅 Sunrise over the Savannah</span>
-            </div>
-        </aside>
-
-        <main class="content">
-            <header class="topbar">
-                <div>
-                    <p class="topbar-label">Afriway Downloader</p>
-                    <h2>🌍 <span class="africa-text">African-Inspired</span> Download Experience</h2>
-                </div>
-                <div class="topbar-actions">
-                    <span class="status-pill" id="statusPill">⚡ Ready</span>
-                </div>
-            </header>
-
-            <!-- Download location — partition selector -->
-            <section class="card location-bar-card">
-                <div class="location-bar-inner">
+            <!-- Download Location -->
+            <div class="modal-section">
+                <h3 class="modal-section-title">📁 Download Location</h3>
+                <div class="drive-selector">
                     <svg class="location-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                     </svg>
-                    <span class="location-label">Drive:</span>
+                    <label class="location-label">Drive:</label>
                     <select id="partitionSelect" class="input-field partition-select">
-                        <option value="">Loading...</option>
+                        <option value="">Loading…</option>
                     </select>
                     <button id="savePartitionBtn" type="button" class="btn btn-primary btn-apply">Apply</button>
-                    <span id="afriwayPathPreview" class="afriway-path-preview"></span>
                 </div>
-            </section>
+                <span id="afriwayPathPreview" class="afriway-path-preview"></span>
+            </div>
 
-            <!-- ══════════════════════════════════════
-                 GLOBAL URL BAR (always visible)
-            ══════════════════════════════════════ -->
-            <section class="card url-bar-card">
-                <div class="card-body">
-                    <div class="url-bar-input-row">
-                        <input type="text" id="globalUrlInput"
-                            placeholder="Paste any URL — YouTube, magnet link, direct file, or video site..."
-                            class="input-field">
+            <!-- About Afriway -->
+            <div class="modal-section">
+                <h3 class="modal-section-title">📱 About Afriway Downloader</h3>
+                <div class="about-block">
+                    <p class="about-desc">A fast, all-in-one download manager built in the spirit of Africa — bold, reliable, and built for everyone. No subscriptions. No ads. Just pure downloading power on your desktop.</p>
+                    <ul class="about-features">
+                        <li>🎬 YouTube &amp; video sites — pick your format and quality</li>
+                        <li>🔗 Torrents — magnet links and .torrent files via aria2</li>
+                        <li>📦 Direct files — any URL, any file type</li>
+                        <li>📊 Live queue — track, pause, resume and retry downloads</li>
+                        <li>💾 Save to any drive — choose your download destination</li>
+                    </ul>
+                    <div class="about-version">Version 1.0 &nbsp;·&nbsp; Developed by Yosef Mulatu</div>
+                </div>
+            </div>
+
+            <!-- How to use -->
+            <div class="modal-section">
+                <div class="workflow-panel">
+                    <h2>🌍 The Ubuntu Way</h2>
+                    <p class="workflow-motto">"I am because we are" — download smarter together.</p>
+                    <ol>
+                        <li>Paste the URL or magnet link.</li>
+                        <li>Fetch — review and choose quality.</li>
+                        <li>Confirm the download.</li>
+                        <li>Track progress in real time.</li>
+                    </ol>
+                </div>
+            </div>
+
+            <!-- Support / coffee -->
+            <div class="modal-section">
+                <div class="support-panel">
+                    <p class="support-heading">☕ Support Afriway</p>
+                    <p class="support-tagline">If this app saves you time, buy me a coffee!</p>
+                    <div class="qr-wrapper">
+                        <img src="{{ url_for('static', filename='qr-coffee.webp') }}"
+                             alt="Buy Me a Coffee QR Code" class="qr-img"
+                             onerror="this.parentElement.style.display='none'">
                     </div>
-                    <div class="url-bar-btn-row">
-                        <button id="globalDownloadBtn" type="button" class="btn btn-primary url-action-btn">
-                            <span class="btn-text">⬇ Download</span>
-                            <span class="spinner hidden"></span>
+                    <a href="https://buymeacoffee.com/yosefmulatu" target="_blank" rel="noopener noreferrer"
+                       class="btn-coffee">☕ Buy Me a Coffee</a>
+                    <span class="support-url">buymeacoffee.com/yosefmulatu</span>
+                    <span class="dev-credit">Developed by: Yosef Mulatu</span>
+                    <div class="social-links">
+                        <a href="https://www.linkedin.com/in/yosefmulatu/" target="_blank" rel="noopener noreferrer"
+                           class="social-link social-link--linkedin" title="LinkedIn">
+                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                            </svg>
+                        </a>
+                        <a href="https://web.facebook.com/yosefmulatufb" target="_blank" rel="noopener noreferrer"
+                           class="social-link social-link--facebook" title="Facebook">
+                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M24 12.073C24 5.404 18.627 0 12 0S0 5.404 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
+                            </svg>
+                        </a>
+                        <a href="https://t.me/jocyJ" target="_blank" rel="noopener noreferrer"
+                           class="social-link social-link--telegram" title="Telegram">
+                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+                            </svg>
+                        </a>
+                        <a href="mailto:josephmulatu1@gmail.com"
+                           class="social-link social-link--email" title="Email">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+                            </svg>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer colours -->
+            <div class="modal-section modal-footer-pat">
+                <div class="footer-pattern">
+                    <span class="pattern-bar pattern-green"></span>
+                    <span class="pattern-bar pattern-gold"></span>
+                    <span class="pattern-bar pattern-red"></span>
+                </div>
+                <p class="modal-footer-note">🎨 Inspired by the colours of Africa · 🌅 Sunrise over the Savannah</p>
+            </div>
+
+        </div><!-- /.modal-body -->
+    </div><!-- /.modal-panel -->
+</div><!-- /#settingsModal -->
+
+
+<!-- ══════════════════════════════════════════════════
+     DOWNLOAD CONFIRM MODAL
+══════════════════════════════════════════════════ -->
+<div id="downloadModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Download Options">
+    <div class="modal-backdrop"></div>
+    <div class="modal-panel dl-panel">
+
+        <div class="modal-header">
+            <div class="dl-title-wrap">
+                <h2 id="dlModalTitle" class="dl-title">Download</h2>
+                <div id="dlModalMeta" class="dl-meta"></div>
+            </div>
+            <div class="dl-header-actions">
+                <button type="button" class="modal-close dl-refresh-btn" id="dlRefreshBtn" title="Refresh / Re-fetch data">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                </button>
+                <button type="button" class="modal-close" onclick="closeDownloadModal()" title="Close">✕</button>
+            </div>
+        </div>
+
+        <div class="modal-body">
+
+            <!-- ── YouTube ── -->
+            <div id="dlYoutubeContent" class="hidden">
+                <div class="dl-layout">
+
+                    <!-- Left: type tabs -->
+                    <div class="dl-tabs-col">
+                        <button type="button" id="tabVideoAudio" class="dl-tab dl-tab--active" onclick="setDlTab('video')">
+                            <span class="dl-tab-icon">🎬</span>
+                            <div>
+                                <div class="dl-tab-title">Video + Audio</div>
+                                <div class="dl-tab-desc">Download as MP4</div>
+                            </div>
                         </button>
-                        <input type="file" id="globalTorrentFileInput" accept=".torrent" class="hidden">
-                        <label for="globalTorrentFileInput" class="btn btn-secondary url-action-btn torrent-pick-btn">
-                            📂 Choose .torrent file
-                        </label>
+                        <button type="button" id="tabAudioOnly" class="dl-tab" onclick="setDlTab('audio')">
+                            <span class="dl-tab-icon">🎵</span>
+                            <div>
+                                <div class="dl-tab-title">Audio Only</div>
+                                <div class="dl-tab-desc">Download as MP3</div>
+                            </div>
+                        </button>
                     </div>
-                </div>
-            </section>
 
-            <!-- ══════════════════════════════════════
-                 ALL DOWNLOADS TAB
-            ══════════════════════════════════════ -->
-            <div class="tab-pane active" id="pane-all">
+                    <!-- Right: format options -->
+                    <div class="dl-formats-col">
+                        <div id="dlVideoPane" class="dl-pane">
+                            <p class="quality-title">🎬 Video Quality</p>
+                            <div id="dlVideoFormatList" class="format-list"></div>
+                            <p class="quality-title quality-title--gap">🎵 Audio Quality</p>
+                            <div id="dlAudioFormatListV" class="format-list"></div>
+                        </div>
+                        <div id="dlAudioPane" class="dl-pane hidden">
+                            <p class="quality-title">🎵 Audio Quality</p>
+                            <div id="dlAudioFormatListA" class="format-list"></div>
+                        </div>
+                    </div>
+
+                </div><!-- /.dl-layout -->
+
+                <!-- Playlist videos (playlists only) -->
+                <div id="dlPlaylistSection" class="hidden dl-playlist-wrap">
+                    <div class="playlist-controls">
+                        <button type="button" class="btn-small" onclick="selectAllVideos()">Select All</button>
+                        <button type="button" class="btn-small" onclick="deselectAllVideos()">Deselect All</button>
+                        <div id="dlSelectedCount" class="selected-count"></div>
+                    </div>
+                    <div id="dlPlaylistVideos" class="playlist-videos-list"></div>
+                </div>
+            </div><!-- /#dlYoutubeContent -->
+
+            <!-- ── Torrent ── -->
+            <div id="dlTorrentContent" class="hidden">
+                <div id="dlTorrentInfo" class="dl-confirm-rows"></div>
+            </div>
+
+            <!-- ── Others / Direct ── -->
+            <div id="dlOthersContent" class="hidden">
+                <div id="dlOthersInfo" class="dl-confirm-rows"></div>
+            </div>
+
+        </div><!-- /.modal-body -->
+
+        <div class="dl-modal-footer">
+            <button id="dlConfirmBtn" type="button" class="btn btn-download" disabled>
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span class="btn-text">Download Now</span>
+                <span class="spinner hidden"></span>
+            </button>
+        </div>
+
+    </div><!-- /.modal-panel -->
+</div><!-- /#downloadModal -->
+
+
+<!-- ══════════════════════════════════════════════════
+     APP SHELL
+══════════════════════════════════════════════════ -->
+<div class="app-container">
+
+    <!-- Header -->
+    <header class="app-header">
+        <div class="brand">
+            <img src="{{ url_for('static', filename='AfriwayLogo.webp') }}"
+                 alt="Afriway" class="brand-logo">
+            <div class="brand-text">
+                <span class="brand-name">Afriway Downloader</span>
+                <span class="brand-tagline">Proudly African · Boldly Modern</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <span class="status-pill" id="statusPill">⚡ Ready</span>
+            <button type="button" class="icon-btn" id="settingsBtn" title="Settings &amp; About">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <main class="app-main">
+
+        <!-- ── URL Input ── -->
+        <section class="card url-card">
+            <div class="url-row">
+                <input type="text" id="globalUrlInput"
+                    placeholder="Paste YouTube, magnet link, or direct file URL…"
+                    class="url-input">
+                <button id="globalDownloadBtn" type="button" class="btn btn-primary url-go-btn">
+                    <span class="btn-text">↓ Fetch</span>
+                    <span class="spinner hidden"></span>
+                </button>
+            </div>
+            <div class="url-extra">
+                <span class="url-hint">YouTube · torrents · direct files · any video site</span>
+                <span class="url-sep">·</span>
+                <input type="file" id="globalTorrentFileInput" accept=".torrent" class="hidden">
+                <label for="globalTorrentFileInput" class="btn-link">📂 Upload .torrent file</label>
+            </div>
+        </section>
+
+        <!-- ── Downloads Queue ── -->
+        <section class="card queue-card">
+            <div class="queue-section-header">
+                <h3 class="queue-title">Downloads</h3>
                 <div class="queue-toolbar">
-                    <input type="text" class="search-input" id="search-all" placeholder="🔍  Search all downloads...">
+                    <input type="text" class="search-input" id="search-all" placeholder="🔍 Search…">
                     <select class="filter-select" id="filter-type-all" title="Filter by type">
                         <option value="">All Types</option>
                         <option value="youtube">YouTube</option>
@@ -176,242 +307,34 @@
                         <option value="error">Failed</option>
                     </select>
                 </div>
-                <div class="bulk-actions">
-                    <label class="bulk-check-label">
-                        <input type="checkbox" onchange="toggleSelectAll('queue-all', this.checked)">
-                        Select All
-                    </label>
-                    <button type="button" class="btn-bulk btn-bulk--pause" onclick="pauseSelected('queue-all')">⏸ Pause</button>
-                    <button type="button" class="btn-bulk btn-bulk--resume" onclick="resumeSelected('queue-all')">▶ Resume</button>
-                </div>
-                <div class="download-queue" id="queue-all">
-                    <div class="queue-empty">No downloads yet. Start from YouTube, Torrent, or Others tab.</div>
-                </div>
             </div>
-
-            <!-- ══════════════════════════════════════
-                 YOUTUBE TAB
-            ══════════════════════════════════════ -->
-            <div class="tab-pane" id="pane-youtube">
-
-                <section id="infoSection" class="card hidden">
-                    <div class="card-header">
-                        <div>
-                            <h3>Step 2 — Video Details</h3>
-                            <p>Review the selected media before downloading.</p>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div id="videoInfo" class="video-info"></div>
-                    </div>
-                </section>
-
-                <section class="content-grid">
-                    <section id="typeSection" class="card hidden">
-                        <div class="card-header">
-                            <div>
-                                <h3>Step 3 — Download Type</h3>
-                                <p>Choose between video or audio only.</p>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="radio-group">
-                                <label class="radio-label">
-                                    <input type="radio" name="downloadType" value="video" checked>
-                                    <span class="radio-custom"></span>
-                                    <div class="radio-content">
-                                        <span class="radio-title">Video + Audio</span>
-                                        <span class="radio-desc">MP4 file — full experience</span>
-                                    </div>
-                                </label>
-                                <label class="radio-label">
-                                    <input type="radio" name="downloadType" value="audio">
-                                    <span class="radio-custom"></span>
-                                    <div class="radio-content">
-                                        <span class="radio-title">Audio Only</span>
-                                        <span class="radio-desc">MP3 file — just the sound</span>
-                                    </div>
-                                </label>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section id="qualitySection" class="card hidden">
-                        <div class="card-header">
-                            <div>
-                                <h3>Step 4 — Quality Selection</h3>
-                                <p>Pick the best video and audio formats for the download.</p>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="quality-grid">
-                                <div id="videoQualityContainer" class="quality-container">
-                                    <h4 class="quality-title">🎬 Video Quality</h4>
-                                    <div id="videoFormats" class="format-list"></div>
-                                </div>
-                                <div id="audioQualityContainer" class="quality-container">
-                                    <h4 class="quality-title">🎵 Audio Quality</h4>
-                                    <div id="audioFormats" class="format-list"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-                </section>
-
-                <section id="playlistSection" class="card hidden">
-                    <div class="card-header">
-                        <div>
-                            <h3>Step 5 — Playlist Items</h3>
-                            <p>Select which playlist videos should be downloaded.</p>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="playlist-controls">
-                            <button type="button" class="btn-small" onclick="selectAllVideos()">Select All</button>
-                            <button type="button" class="btn-small" onclick="deselectAllVideos()">Deselect All</button>
-                            <div id="selectedCount" class="selected-count"></div>
-                        </div>
-                        <div id="playlistVideos" class="playlist-videos-list"></div>
-                    </div>
-                </section>
-
-                <section class="card hidden" id="downloadSection">
-                    <div class="card-header">
-                        <div>
-                            <h3>Step 6 — Download</h3>
-                            <p>Start the download with your chosen settings.</p>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <button id="downloadBtn" type="button" class="btn btn-download">
-                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                <polyline points="7 10 12 15 17 10"></polyline>
-                                <line x1="12" y1="15" x2="12" y2="3"></line>
-                            </svg>
-                            <span class="btn-text">Download Now</span>
-                            <span class="spinner hidden"></span>
-                        </button>
-                    </div>
-                </section>
-
-                <section id="progressSection" class="card hidden">
-                    <div class="card-header">
-                        <div>
-                            <h3>Progress Overview</h3>
-                            <p>Track the active download live.</p>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="progress-container">
-                            <div class="progress-bar">
-                                <div id="progressFill" class="progress-fill"></div>
-                            </div>
-                            <div id="progressText" class="progress-text">Preparing download...</div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- YouTube download history -->
-                <div class="queue-toolbar">
-                    <input type="text" class="search-input" id="search-youtube"
-                        placeholder="🔍  Search YouTube downloads...">
-                </div>
-                <div class="bulk-actions">
-                    <label class="bulk-check-label">
-                        <input type="checkbox" onchange="toggleSelectAll('queue-youtube', this.checked)">
-                        Select All
-                    </label>
-                    <button type="button" class="btn-bulk btn-bulk--pause" onclick="pauseSelected('queue-youtube')">⏸ Pause</button>
-                    <button type="button" class="btn-bulk btn-bulk--resume" onclick="resumeSelected('queue-youtube')">▶ Resume</button>
-                </div>
-                <div class="download-queue" id="queue-youtube"></div>
+            <div class="bulk-actions">
+                <label class="bulk-check-label">
+                    <input type="checkbox" onchange="toggleSelectAll('queue-all', this.checked)">
+                    Select All
+                </label>
+                <button type="button" class="btn-bulk btn-bulk--pause" onclick="pauseSelected('queue-all')">⏸ Pause</button>
+                <button type="button" class="btn-bulk btn-bulk--resume" onclick="resumeSelected('queue-all')">▶ Resume</button>
             </div>
-
-            <!-- ══════════════════════════════════════
-                 TORRENT TAB
-            ══════════════════════════════════════ -->
-            <div class="tab-pane" id="pane-torrent">
-
-                <section class="card">
-                    <div class="card-header">
-                        <div>
-                            <h3>📂 Upload .torrent file</h3>
-                            <p>Or paste a magnet link / .torrent URL in the bar above and click <strong>Start Torrent</strong>.</p>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="file-upload-zone">
-                            <input type="file" id="torrentFileInput" accept=".torrent" class="hidden">
-                            <label for="torrentFileInput" class="btn-file-upload">
-                                📂 Choose .torrent file
-                            </label>
-                            <span id="torrentFileName" class="file-name-hint">No file selected</span>
-                        </div>
-                    </div>
-                </section>
-
-                <section id="torrentInfoSection" class="card hidden">
-                    <div class="card-header"><h3>Torrent Status</h3></div>
-                    <div class="card-body" id="torrentInfoBody"></div>
-                </section>
-
-                <div class="queue-toolbar">
-                    <input type="text" class="search-input" id="search-torrent"
-                        placeholder="🔍  Search torrent downloads...">
-                </div>
-                <div class="bulk-actions">
-                    <label class="bulk-check-label">
-                        <input type="checkbox" onchange="toggleSelectAll('queue-torrent', this.checked)">
-                        Select All
-                    </label>
-                    <button type="button" class="btn-bulk btn-bulk--pause" onclick="pauseSelected('queue-torrent')">⏸ Pause</button>
-                    <button type="button" class="btn-bulk btn-bulk--resume" onclick="resumeSelected('queue-torrent')">▶ Resume</button>
-                </div>
-                <div class="download-queue" id="queue-torrent"></div>
+            <div class="download-queue" id="queue-all">
+                <div class="queue-empty">No downloads yet. Paste a URL above to get started.</div>
             </div>
+        </section>
 
-            <!-- ══════════════════════════════════════
-                 OTHERS TAB
-            ══════════════════════════════════════ -->
-            <div class="tab-pane" id="pane-others">
+    </main>
 
-                <section id="othersInfoSection" class="card hidden">
-                    <div class="card-header"><h3>File Info</h3></div>
-                    <div class="card-body" id="othersInfoBody"></div>
-                    <div class="card-body">
-                        <button id="downloadOthersBtn" type="button" class="btn btn-download">
-                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                <polyline points="7 10 12 15 17 10"></polyline>
-                                <line x1="12" y1="15" x2="12" y2="3"></line>
-                            </svg>
-                            <span class="btn-text">Download</span>
-                            <span class="spinner hidden"></span>
-                        </button>
-                    </div>
-                </section>
+    <footer class="app-footer">
+        <div class="footer-pattern">
+            <span class="pattern-bar pattern-green"></span>
+            <span class="pattern-bar pattern-gold"></span>
+            <span class="pattern-bar pattern-red"></span>
+        </div>
+        <span>🎨 Inspired by the colours of Africa &nbsp;·&nbsp; 🌅 Sunrise over the Savannah</span>
+    </footer>
 
-                <div class="queue-toolbar">
-                    <input type="text" class="search-input" id="search-others"
-                        placeholder="🔍  Search other downloads...">
-                </div>
-                <div class="bulk-actions">
-                    <label class="bulk-check-label">
-                        <input type="checkbox" onchange="toggleSelectAll('queue-others', this.checked)">
-                        Select All
-                    </label>
-                    <button type="button" class="btn-bulk btn-bulk--pause" onclick="pauseSelected('queue-others')">⏸ Pause</button>
-                    <button type="button" class="btn-bulk btn-bulk--resume" onclick="resumeSelected('queue-others')">▶ Resume</button>
-                </div>
-                <div class="download-queue" id="queue-others"></div>
-            </div>
+</div><!-- /.app-container -->
 
-        </main>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.all.min.js"></script>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.all.min.js"></script>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
-
 </html>

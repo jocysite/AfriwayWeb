@@ -1,74 +1,185 @@
 // ══════════════════════════════════════════════════
 // State
 // ══════════════════════════════════════════════════
-let currentData = null;
+let currentData         = null;
 let selectedVideoFormat = null;
 let selectedAudioFormat = null;
-let playlistData = [];
-let skippedIndices = new Set();
-let othersAnalyzedData = null;
-let fetchedUrl = "";
-let queuePollInterval = null;
-const selectedSessions = new Set(); // session IDs checked via queue-item checkboxes
+let playlistData        = [];
+let skippedIndices      = new Set();
+let othersAnalyzedData  = null;
+let fetchedUrl          = "";
+let currentMode         = null;    // 'youtube' | 'others' | 'torrent' | 'torrent_file' | null
+let dlTabMode           = "video"; // active tab inside download modal
+let queuePollInterval   = null;
+const selectedSessions  = new Set();
+let urlCache            = {};      // { [url]: { mode, infoData?, formatsData?, othersData? } }
+let cachedDownloads     = [];      // updated every 2s by queue poll
+let pendingTorrentFile  = null;    // File object awaiting upload confirmation
 
 // ══════════════════════════════════════════════════
-// DOM — YouTube
+// DOM refs — page chrome
 // ══════════════════════════════════════════════════
-const globalUrlInput = document.getElementById("globalUrlInput");
-const globalDownloadBtn = document.getElementById("globalDownloadBtn");
+const globalUrlInput         = document.getElementById("globalUrlInput");
+const globalDownloadBtn      = document.getElementById("globalDownloadBtn");
 const globalTorrentFileInput = document.getElementById("globalTorrentFileInput");
-const infoSection = document.getElementById("infoSection");
-const videoInfo = document.getElementById("videoInfo");
-const typeSection = document.getElementById("typeSection");
-const qualitySection = document.getElementById("qualitySection");
-const downloadSection = document.getElementById("downloadSection");
-const videoQualityContainer = document.getElementById("videoQualityContainer");
-const videoFormats = document.getElementById("videoFormats");
-const audioFormats = document.getElementById("audioFormats");
-const downloadBtn = document.getElementById("downloadBtn");
-const progressSection = document.getElementById("progressSection");
-const progressFill = document.getElementById("progressFill");
-const progressText = document.getElementById("progressText");
-const playlistSection = document.getElementById("playlistSection");
-const playlistVideosContainer = document.getElementById("playlistVideos");
+const partitionSelect        = document.getElementById("partitionSelect");
+const savePartitionBtn       = document.getElementById("savePartitionBtn");
+const afriwayPathPreview     = document.getElementById("afriwayPathPreview");
+
+// DOM refs — download modal
+const downloadModal      = document.getElementById("downloadModal");
+const dlModalTitle       = document.getElementById("dlModalTitle");
+const dlModalMeta        = document.getElementById("dlModalMeta");
+const dlYoutubeContent   = document.getElementById("dlYoutubeContent");
+const dlTorrentContent   = document.getElementById("dlTorrentContent");
+const dlOthersContent    = document.getElementById("dlOthersContent");
+const dlVideoFormatList  = document.getElementById("dlVideoFormatList");
+const dlAudioFormatListV = document.getElementById("dlAudioFormatListV");
+const dlAudioFormatListA = document.getElementById("dlAudioFormatListA");
+const dlPlaylistSection  = document.getElementById("dlPlaylistSection");
+const dlPlaylistVideos   = document.getElementById("dlPlaylistVideos");
+const dlSelectedCount    = document.getElementById("dlSelectedCount");
+const dlTorrentInfo      = document.getElementById("dlTorrentInfo");
+const dlOthersInfo       = document.getElementById("dlOthersInfo");
+const dlConfirmBtn       = document.getElementById("dlConfirmBtn");
+const dlRefreshBtn       = document.getElementById("dlRefreshBtn");
 
 // ══════════════════════════════════════════════════
-// DOM — Shared / other tabs
+// Settings Modal
 // ══════════════════════════════════════════════════
-const partitionSelect = document.getElementById("partitionSelect");
-const savePartitionBtn = document.getElementById("savePartitionBtn");
-const afriwayPathPreview = document.getElementById("afriwayPathPreview");
-const downloadOthersBtn = document.getElementById("downloadOthersBtn");
-
-// ══════════════════════════════════════════════════
-// Tabs
-// ══════════════════════════════════════════════════
-function switchToTab(tabId) {
-  document.querySelectorAll(".nav-item").forEach(b => b.classList.remove("active"));
-  document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
-  const btn = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
-  if (btn) btn.classList.add("active");
-  const pane = document.getElementById(`pane-${tabId}`);
-  if (pane) pane.classList.add("active");
+function openSettings() {
+  document.getElementById("settingsModal").classList.remove("hidden");
 }
 
-document.querySelectorAll(".nav-item[data-tab]").forEach(btn => {
-  btn.addEventListener("click", () => switchToTab(btn.dataset.tab));
+function closeSettings() {
+  document.getElementById("settingsModal").classList.add("hidden");
+}
+
+document.getElementById("settingsBtn").addEventListener("click", openSettings);
+
+// ══════════════════════════════════════════════════
+// Download Modal
+// ══════════════════════════════════════════════════
+function openDownloadModal(mode) {
+  dlYoutubeContent.classList.add("hidden");
+  dlTorrentContent.classList.add("hidden");
+  dlOthersContent.classList.add("hidden");
+  if (mode === "youtube")                        dlYoutubeContent.classList.remove("hidden");
+  if (mode === "torrent" || mode === "torrent_file") dlTorrentContent.classList.remove("hidden");
+  if (mode === "others")                         dlOthersContent.classList.remove("hidden");
+  downloadModal.classList.remove("hidden");
+}
+
+function closeDownloadModal() {
+  downloadModal.classList.add("hidden");
+  setLoading(globalDownloadBtn, false);
+}
+
+dlConfirmBtn.addEventListener("click", confirmDownload);
+
+function confirmDownload() {
+  if      (currentMode === "youtube")       startDownload();
+  else if (currentMode === "others")        startOthersDownload();
+  else if (currentMode === "torrent")       startTorrentDownloadConfirmed();
+  else if (currentMode === "torrent_file")  startTorrentFileDownload();
+}
+
+// Refresh button — clear cache and re-fetch
+function refreshDownloadModal() {
+  const url = globalUrlInput.value.trim();
+  if (!url) return;
+  delete urlCache[url];
+  if      (currentMode === "youtube") fetchVideoInfo();
+  else if (currentMode === "others")  analyzeOthersUrl();
+  else    { closeDownloadModal(); handleGlobalDownload(); }
+}
+
+if (dlRefreshBtn) dlRefreshBtn.addEventListener("click", refreshDownloadModal);
+
+// Restore previously cached data into modal without re-fetching
+function restoreFromCache(url) {
+  const cached = urlCache[url];
+  if (!cached) return false;
+
+  if (cached.mode === "youtube") {
+    fetchedUrl  = url;
+    currentData = { ...cached.infoData, ...cached.formatsData };
+    skippedIndices.clear();
+
+    dlModalTitle.textContent = cached.infoData.title || "Video";
+    dlModalMeta.innerHTML    = cached.infoData.is_playlist
+      ? `<span class="badge">${cached.infoData.video_count || "?"} videos</span>`
+      : `<span class="type-badge type-badge--youtube">YouTube</span>`;
+
+    setDlTab("video");
+    displayFormats(cached.formatsData);
+    dlConfirmBtn.disabled = false;
+
+    if (cached.infoData.is_playlist && cached.infoData.videos) {
+      playlistData = cached.infoData.videos;
+      displayPlaylistVideos(cached.infoData.videos);
+      dlPlaylistSection.classList.remove("hidden");
+    } else {
+      dlPlaylistSection.classList.add("hidden");
+    }
+
+    openDownloadModal("youtube");
+    return true;
+  }
+
+  if (cached.mode === "others") {
+    othersAnalyzedData = cached.othersData;
+    const data = cached.othersData;
+
+    dlModalTitle.textContent = data.title || data.filename || "File Download";
+    dlModalMeta.innerHTML    = `<span class="type-badge type-badge--${data.type || "direct"}">${data.type || "direct"}</span>`;
+
+    let rows = "";
+    if (data.filename) rows += buildInfoRow("📄 File", data.filename);
+    if (data.size)     rows += buildInfoRow("📊 Size", data.size);
+    rows += buildInfoRow("🏷️ Type", data.type || "direct file");
+    dlOthersInfo.innerHTML = rows;
+
+    dlConfirmBtn.disabled = false;
+    openDownloadModal("others");
+    return true;
+  }
+
+  return false;
+}
+
+// Tab switcher inside YouTube modal
+function setDlTab(mode) {
+  dlTabMode = mode;
+  const isVideo = mode === "video";
+
+  document.getElementById("tabVideoAudio").classList.toggle("dl-tab--active",  isVideo);
+  document.getElementById("tabAudioOnly").classList.toggle("dl-tab--active",  !isVideo);
+  document.getElementById("dlVideoPane").classList.toggle("hidden", !isVideo);
+  document.getElementById("dlAudioPane").classList.toggle("hidden",  isVideo);
+
+  if (!isVideo) {
+    const selectedV = dlAudioFormatListV.querySelector(".format-item.selected");
+    if (selectedV) {
+      const fid = selectedV.dataset.formatId;
+      dlAudioFormatListA.querySelectorAll(".format-item").forEach(el => {
+        el.classList.toggle("selected", el.dataset.formatId === fid);
+      });
+    }
+  }
+}
+
+// Escape closes whichever modal is open
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { closeSettings(); closeDownloadModal(); }
 });
 
-function isYouTubeUrl(url) {
-  return /(?:youtube\.com|youtu\.be)/i.test(url);
-}
-function isTorrentUrl(url) {
-  return url.startsWith("magnet:") || /\.torrent(\?|$)/i.test(url);
-}
-
 // ══════════════════════════════════════════════════
-// Download location — Afriway partition selector
+// Download location — partition selector
 // ══════════════════════════════════════════════════
 async function loadDrives() {
   try {
-    const res = await fetch("/api/drives");
+    const res  = await fetch("/api/drives");
     const data = await res.json();
     if (!partitionSelect) return;
     partitionSelect.innerHTML = "";
@@ -85,11 +196,9 @@ async function loadDrives() {
 
 async function loadPartition() {
   try {
-    const res = await fetch("/api/get-partition");
+    const res  = await fetch("/api/get-partition");
     const data = await res.json();
-    if (partitionSelect && data.partition) {
-      partitionSelect.value = data.partition;
-    }
+    if (partitionSelect && data.partition) partitionSelect.value = data.partition;
     if (afriwayPathPreview) afriwayPathPreview.textContent = data.path || "";
   } catch (_) {}
 }
@@ -106,7 +215,7 @@ if (savePartitionBtn) {
     const partition = partitionSelect && partitionSelect.value;
     if (!partition) return;
     try {
-      const res = await fetch("/api/set-partition", {
+      const res  = await fetch("/api/set-partition", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ partition })
@@ -118,14 +227,12 @@ if (savePartitionBtn) {
       } else {
         showError(data.error || "Failed to set partition");
       }
-    } catch (e) {
-      showError(e.message);
-    }
+    } catch (e) { showError(e.message); }
   });
 }
 
 // ══════════════════════════════════════════════════
-// Queue polling (every 2s)
+// Queue polling
 // ══════════════════════════════════════════════════
 function startQueuePolling() {
   if (queuePollInterval) return;
@@ -137,47 +244,29 @@ async function refreshAllQueues() {
     const res = await fetch("/api/downloads");
     if (!res.ok) return;
     const downloads = await res.json();
-    renderQueue("queue-all",     downloads, null,       null);
-    renderQueue("queue-youtube", downloads, "youtube",  null);
-    renderQueue("queue-torrent", downloads, "torrent",  null);
-    renderQueue("queue-others",  downloads, null,       ["direct", "video"]);
+    cachedDownloads = downloads;
+    renderQueue("queue-all", downloads);
   } catch (_) {}
 }
 
-function renderQueue(queueId, downloads, typeFilter, typesArray) {
+function renderQueue(queueId, downloads) {
   const container = document.getElementById(queueId);
   if (!container) return;
 
-  const searchIdMap = {
-    "queue-all":     "search-all",
-    "queue-youtube": "search-youtube",
-    "queue-torrent": "search-torrent",
-    "queue-others":  "search-others"
-  };
-  const searchEl = document.getElementById(searchIdMap[queueId]);
-  const searchVal = (searchEl?.value || "").toLowerCase();
+  const searchVal    = (document.getElementById("search-all")?.value || "").toLowerCase();
+  const typeFilter   = document.getElementById("filter-type-all")?.value;
+  const statusFilter = document.getElementById("filter-status-all")?.value;
 
   let filtered = [...downloads];
-
-  if (typeFilter) filtered = filtered.filter(d => d.type === typeFilter);
-  if (typesArray) filtered = filtered.filter(d => typesArray.includes(d.type));
-
-  if (queueId === "queue-all") {
-    const typeDropdown  = document.getElementById("filter-type-all")?.value;
-    const statusDropdown = document.getElementById("filter-status-all")?.value;
-    if (typeDropdown)   filtered = filtered.filter(d => d.type === typeDropdown);
-    if (statusDropdown) filtered = filtered.filter(d => d.status === statusDropdown);
-  }
-
-  if (searchVal) {
-    filtered = filtered.filter(d =>
-      (d.name || "").toLowerCase().includes(searchVal) ||
-      (d.url  || "").toLowerCase().includes(searchVal)
-    );
-  }
+  if (typeFilter)    filtered = filtered.filter(d => d.type === typeFilter);
+  if (statusFilter)  filtered = filtered.filter(d => d.status === statusFilter);
+  if (searchVal)     filtered = filtered.filter(d =>
+    (d.name || "").toLowerCase().includes(searchVal) ||
+    (d.url  || "").toLowerCase().includes(searchVal)
+  );
 
   if (filtered.length === 0) {
-    container.innerHTML = '<div class="queue-empty">No downloads here yet.</div>';
+    container.innerHTML = '<div class="queue-empty">No downloads yet. Paste a URL above to get started.</div>';
     return;
   }
 
@@ -186,17 +275,21 @@ function renderQueue(queueId, downloads, typeFilter, typesArray) {
 
 function buildQueueItem(d) {
   const icons = { youtube: "▶️", torrent: "🔗", direct: "📦", video: "🎬" };
-  const icon = icons[d.type] || "📥";
-  const name = d.name || d.url || "Unknown";
-  const sid  = d.session_id;
+  const icon  = icons[d.type] || "📥";
+  const name  = d.name || d.url || "Unknown";
+  const sid   = d.session_id;
   const typeBadge   = `<span class="type-badge type-badge--${d.type || "direct"}">${d.type || "file"}</span>`;
   const statusBadge = `<span class="status-badge status-badge--${d.status}">${d.status}</span>`;
-  const progressPct = d.progress || 0;
   const showBar     = d.status === "downloading" || d.status === "paused";
+
+  const isClickable = d.status === "completed" && d.file_exists === true && d.filepath;
+  const nameClass   = isClickable ? "queue-item-name queue-item-name--clickable" : "queue-item-name";
+  const nameAttrs   = isClickable
+    ? `data-filepath="${escHtml(d.filepath)}" onclick="openFile(this.dataset.filepath)"`
+    : "";
 
   let folderBtn = "";
   if (d.status === "completed" && d.filepath) {
-    // Use data-filepath (not an inline JS string) so Windows backslashes aren't eaten as escape sequences
     if (d.file_exists === false) {
       folderBtn = `<button type="button" class="btn-show-folder btn-show-folder--missing"
         data-filepath="${escHtml(d.filepath)}" onclick="showInFolder(this.dataset.filepath)">⚠️ File moved?</button>
@@ -233,11 +326,11 @@ function buildQueueItem(d) {
         ${selectedSessions.has(sid) ? "checked" : ""}>
       <div class="queue-item-icon">${icon}</div>
       <div class="queue-item-info">
-        <div class="queue-item-name" title="${escHtml(name)}">${escHtml(name)}</div>
+        <div class="${nameClass}" ${nameAttrs} title="${escHtml(name)}">${escHtml(name)}</div>
         <div class="queue-item-meta">${typeBadge} ${statusBadge}${pauseBtn}${folderBtn}${copyBtn}</div>
         ${showBar ? `
           <div class="queue-item-progress-bar">
-            <div class="queue-item-progress-fill" style="width:${progressPct}%"></div>
+            <div class="queue-item-progress-fill" style="width:${d.progress || 0}%"></div>
           </div>
         ` : ""}
         <div class="queue-item-msg">${escHtml(d.message || "")}</div>
@@ -254,22 +347,33 @@ function buildQueueItem(d) {
 async function showInFolder(filepath) {
   if (!filepath) { showError("File location not recorded for this download."); return; }
   try {
-    const res = await fetch("/api/show-in-folder", {
+    const res  = await fetch("/api/show-in-folder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filepath })
     });
     const data = await res.json();
     if (!res.ok) {
-      if (data.error === "file_not_found") {
-        openMissingModal(filepath);
-      } else {
-        showError(data.error || "Could not open folder");
-      }
+      if (data.error === "file_not_found") openMissingModal(filepath);
+      else showError(data.error || "Could not open folder");
     }
-  } catch (e) {
-    showError(e.message);
-  }
+  } catch (e) { showError(e.message); }
+}
+
+async function openFile(filepath) {
+  if (!filepath) return;
+  try {
+    const res  = await fetch("/api/open-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filepath })
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      if (data.error === "file_not_found") openMissingModal(filepath);
+      else showError(data.error || "Could not open file");
+    }
+  } catch (e) { showError(e.message); }
 }
 
 function openMissingModal(filepath) {
@@ -278,7 +382,7 @@ function openMissingModal(filepath) {
     title: "File Not Found",
     html: `
       <p style="margin:0 0 12px;color:#d4c4b0;font-size:14px">The file can no longer be found at its saved location:</p>
-      <code style="display:block;background:rgba(255,255,255,0.05);border:1px solid rgba(212,175,55,0.22);
+      <code style="display:block;background:rgba(255,255,255,0.05);border:1px solid rgba(212,196,55,0.22);
         border-radius:8px;padding:10px 14px;font-size:12px;color:#D4AF37;word-break:break-all;
         text-align:left;font-family:Consolas,Monaco,monospace">${escHtml(filepath)}</code>
       <p style="margin:12px 0 0;color:#d4c4b0;font-size:14px">It may have been moved, renamed, or deleted.</p>
@@ -287,11 +391,11 @@ function openMissingModal(filepath) {
 }
 
 // ══════════════════════════════════════════════════
-// Pause / Resume controls
+// Queue item actions
 // ══════════════════════════════════════════════════
 function toggleSessionSelect(sid, checked) {
   if (checked) selectedSessions.add(sid);
-  else selectedSessions.delete(sid);
+  else         selectedSessions.delete(sid);
 }
 
 function toggleSelectAll(queueId, checked) {
@@ -300,15 +404,13 @@ function toggleSelectAll(queueId, checked) {
   container.querySelectorAll(".queue-item-check").forEach(cb => {
     cb.checked = checked;
     if (checked) selectedSessions.add(cb.dataset.sid);
-    else selectedSessions.delete(cb.dataset.sid);
+    else         selectedSessions.delete(cb.dataset.sid);
   });
 }
 
 async function pauseDownload(sid) {
-  try {
-    await fetch(`/api/pause/${sid}`, { method: "POST" });
-    refreshAllQueues();
-  } catch (e) { showError(e.message); }
+  try { await fetch(`/api/pause/${sid}`, { method: "POST" }); refreshAllQueues(); }
+  catch (e) { showError(e.message); }
 }
 
 async function resumeDownload(sid) {
@@ -323,8 +425,19 @@ async function pauseSelected(queueId) {
   const container = document.getElementById(queueId);
   if (!container) return;
   const ids = [...container.querySelectorAll(".queue-item-check:checked")].map(cb => cb.dataset.sid);
+  for (const sid of ids) { try { await fetch(`/api/pause/${sid}`, { method: "POST" }); } catch (_) {} }
+  refreshAllQueues();
+}
+
+async function resumeSelected(queueId) {
+  const container = document.getElementById(queueId);
+  if (!container) return;
+  const ids = [...container.querySelectorAll(".queue-item-check:checked")].map(cb => cb.dataset.sid);
   for (const sid of ids) {
-    try { await fetch(`/api/pause/${sid}`, { method: "POST" }); } catch (_) {}
+    try {
+      const res = await fetch(`/api/resume/${sid}`, { method: "POST" });
+      if (!res.ok) { const d = await res.json(); showError(d.error || "Could not resume"); }
+    } catch (_) {}
   }
   refreshAllQueues();
 }
@@ -341,9 +454,7 @@ async function copyLink(url) {
   try {
     await navigator.clipboard.writeText(url);
     swalToast.fire({ icon: "success", title: "Link copied!" });
-  } catch (e) {
-    showError("Could not copy to clipboard: " + e.message);
-  }
+  } catch (e) { showError("Could not copy: " + e.message); }
 }
 
 async function removeSession(sid, deleteFile) {
@@ -359,33 +470,24 @@ async function removeSession(sid, deleteFile) {
   });
   if (!result.isConfirmed) return;
   try {
-    const res = await fetch(`/api/remove/${sid}`, {
+    const res  = await fetch(`/api/remove/${sid}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ delete_file: deleteFile })
     });
     const data = await res.json();
     if (!res.ok) { showError(data.error || "Could not remove"); return; }
-    if (deleteFile) showSuccess(data.deleted ? "File deleted and removed from list." : "Removed from list (file was already gone).");
-    else showSuccess("Removed from list.");
+    showSuccess(deleteFile
+      ? (data.deleted ? "File deleted and removed." : "Removed (file was already gone).")
+      : "Removed from list.");
     selectedSessions.delete(sid);
     refreshAllQueues();
   } catch (e) { showError(e.message); }
 }
 
-async function resumeSelected(queueId) {
-  const container = document.getElementById(queueId);
-  if (!container) return;
-  const ids = [...container.querySelectorAll(".queue-item-check:checked")].map(cb => cb.dataset.sid);
-  for (const sid of ids) {
-    try {
-      const res = await fetch(`/api/resume/${sid}`, { method: "POST" });
-      if (!res.ok) { const d = await res.json(); showError(d.error || "Could not resume"); }
-    } catch (_) {}
-  }
-  refreshAllQueues();
-}
-
+// ══════════════════════════════════════════════════
+// Helpers
+// ══════════════════════════════════════════════════
 function escHtml(str) {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -394,131 +496,222 @@ function escHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-// Live search wiring
-["search-all", "search-youtube", "search-torrent", "search-others"].forEach(id => {
-  document.getElementById(id)?.addEventListener("input", refreshAllQueues);
-});
-["filter-type-all", "filter-status-all"].forEach(id => {
-  document.getElementById(id)?.addEventListener("change", refreshAllQueues);
-});
+function isYouTubeUrl(url) { return /(?:youtube\.com|youtu\.be)/i.test(url); }
+function isTorrentUrl(url)  { return url.startsWith("magnet:") || /\.torrent(\?|$)/i.test(url); }
+
+async function safeJson(res) {
+  const text = await res.text();
+  try { return JSON.parse(text); }
+  catch (_) { return { error: `Server returned unexpected response (HTTP ${res.status}).` }; }
+}
+
+function buildInfoRow(label, value) {
+  return `<div class="info-item">
+    <span class="info-label">${label}</span>
+    <span class="info-value">${escHtml(String(value))}</span>
+  </div>`;
+}
+
+function setLoading(button, isLoading) {
+  const btnText = button.querySelector(".btn-text");
+  const spinner = button.querySelector(".spinner");
+  if (isLoading) {
+    btnText?.classList.add("hidden");
+    spinner?.classList.remove("hidden");
+    button.disabled = true;
+  } else {
+    btnText?.classList.remove("hidden");
+    spinner?.classList.add("hidden");
+    button.disabled = false;
+  }
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024)                return `${bytes} B`;
+  if (bytes < 1024 * 1024)         return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024)  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+async function checkDuplicate(url) {
+  if (!url) return "proceed";
+  const dupe = cachedDownloads.find(d =>
+    d.url === url && d.status === "completed" && d.file_exists === true
+  );
+  if (!dupe) return "proceed";
+
+  const result = await swalDark.fire({
+    icon: "warning",
+    title: "Already Downloaded",
+    html: `<p style="margin:0 0 10px;color:#d4c4b0;font-size:14px">This URL was already downloaded:</p>
+           <strong style="color:#D4AF37;word-break:break-all">${escHtml(dupe.name)}</strong>
+           <p style="margin:10px 0 0;color:#d4c4b0;font-size:13px">What would you like to do?</p>`,
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: "📋 Rename",
+    denyButtonText: "♻️ Overwrite",
+    cancelButtonText: "✕ Abort",
+    denyButtonColor: "#6c757d",
+  });
+
+  if (result.isConfirmed) return "rename";
+  if (result.isDenied)    return "overwrite";
+  return "abort";
+}
+
+// Live search / filter wiring
+document.getElementById("search-all")?.addEventListener("input", refreshAllQueues);
+document.getElementById("filter-type-all")?.addEventListener("change", refreshAllQueues);
+document.getElementById("filter-status-all")?.addEventListener("change", refreshAllQueues);
 
 // ══════════════════════════════════════════════════
-// Torrent tab
+// Global fetch handler
 // ══════════════════════════════════════════════════
+function handleGlobalDownload() {
+  const url = globalUrlInput.value.trim();
+  if (!url) { showError("Please enter a URL"); return; }
 
-const torrentFileInput = document.getElementById("torrentFileInput");
-const torrentFileName  = document.getElementById("torrentFileName");
+  if (isYouTubeUrl(url)) {
+    currentMode = "youtube";
+    if (urlCache[url]?.mode === "youtube") { restoreFromCache(url); return; }
+    fetchVideoInfo();
+  } else if (isTorrentUrl(url)) {
+    currentMode = "torrent";
+    startTorrentDownload();
+  } else {
+    currentMode = "others";
+    if (urlCache[url]?.mode === "others") { restoreFromCache(url); return; }
+    analyzeOthersUrl();
+  }
+}
 
-torrentFileInput.addEventListener("change", () => {
-  const file = torrentFileInput.files[0];
+globalDownloadBtn.addEventListener("click", handleGlobalDownload);
+globalUrlInput.addEventListener("keypress", e => { if (e.key === "Enter") handleGlobalDownload(); });
+
+// Torrent file — show confirmation modal first, upload only on confirm
+globalTorrentFileInput.addEventListener("change", () => {
+  const file = globalTorrentFileInput.files[0];
   if (!file) return;
-  torrentFileName.textContent = file.name;
-  document.querySelector("label[for='torrentFileInput']").classList.add("has-file");
-  uploadTorrentFile(file);
+  globalTorrentFileInput.value = "";
+  showTorrentFileModal(file);
 });
 
-async function uploadTorrentFile(file) {
-  const label = document.querySelector("label[for='torrentFileInput']");
-  label.textContent = "⏳ Uploading...";
+// ══════════════════════════════════════════════════
+// Torrent
+// ══════════════════════════════════════════════════
+function startTorrentDownload() {
+  const url = globalUrlInput.value.trim();
+  if (!url) return;
+  const isMagnet = url.startsWith("magnet:");
+  dlModalTitle.textContent = isMagnet ? "Magnet Link" : "Torrent Download";
+  dlModalMeta.innerHTML    = `<span class="type-badge type-badge--torrent">torrent</span>`;
+  const displayUrl = url.length > 90 ? url.slice(0, 90) + "…" : url;
+  dlTorrentInfo.innerHTML  =
+    buildInfoRow("🔗 URL",  displayUrl) +
+    buildInfoRow("📂 Type", isMagnet ? "Magnet link" : "Torrent URL");
+  dlConfirmBtn.disabled = false;
+  openDownloadModal("torrent");
+}
+
+function showTorrentFileModal(file) {
+  pendingTorrentFile = file;
+  currentMode = "torrent_file";
+
+  dlModalTitle.textContent = file.name.replace(/\.torrent$/i, "") || file.name;
+  dlModalMeta.innerHTML    = `<span class="type-badge type-badge--torrent">torrent file</span>`;
+  dlTorrentInfo.innerHTML  =
+    buildInfoRow("📄 File", file.name) +
+    buildInfoRow("📊 Size", formatFileSize(file.size)) +
+    buildInfoRow("📂 Type", ".torrent file");
+  dlConfirmBtn.disabled = false;
+  openDownloadModal("torrent_file");
+}
+
+async function startTorrentDownloadConfirmed() {
+  const url = globalUrlInput.value.trim();
+  if (!url) return;
+  setLoading(dlConfirmBtn, true);
+  try {
+    const res  = await fetch("/api/download-torrent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url })
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data.error || "Torrent failed");
+    globalUrlInput.value = "";
+    closeDownloadModal();
+    showSuccess("Torrent started! Track progress in the queue below.");
+    startQueuePolling();
+  } catch (e) { showError(e.message); }
+  finally { setLoading(dlConfirmBtn, false); }
+}
+
+async function startTorrentFileDownload() {
+  if (!pendingTorrentFile) return;
+  const file = pendingTorrentFile;
+  setLoading(dlConfirmBtn, true);
   try {
     const formData = new FormData();
     formData.append("file", file);
-    const res = await fetch("/api/upload-torrent", { method: "POST", body: formData });
-    const data = await res.json();
+    const res  = await fetch("/api/upload-torrent", { method: "POST", body: formData });
+    const data = await safeJson(res);
     if (!res.ok) throw new Error(data.error || "Upload failed");
-    const section = document.getElementById("torrentInfoSection");
-    const body    = document.getElementById("torrentInfoBody");
-    section.classList.remove("hidden");
-    body.innerHTML = `
-      <div class="info-item">
-        <span class="info-label">File:</span>
-        <span class="info-value">${escHtml(file.name)}</span>
-      </div>
-      <div class="info-item">
-        <span class="info-label">Status:</span>
-        <span class="status-badge status-badge--downloading">Downloading</span>
-      </div>
-    `;
+    pendingTorrentFile = null;
+    closeDownloadModal();
+    showSuccess("Torrent started! Track progress in the queue below.");
     startQueuePolling();
-  } catch (e) {
-    showError(e.message);
-    torrentFileName.textContent = "No file selected";
-    document.querySelector("label[for='torrentFileInput']").classList.remove("has-file");
-  } finally {
-    label.textContent = "📂 Choose .torrent file";
-    torrentFileInput.value = "";
-  }
-}
-
-async function startTorrentDownload() {
-  const url = globalUrlInput.value.trim();
-  if (!url) { showError("Please enter a URL"); return; }
-  switchToTab("torrent");
-
-  setLoading(globalDownloadBtn, true);
-  try {
-    const res = await fetch("/api/download-torrent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Torrent failed");
-    globalUrlInput.value = "";
-    const section = document.getElementById("torrentInfoSection");
-    const body = document.getElementById("torrentInfoBody");
-    section.classList.remove("hidden");
-    body.innerHTML = `
-      <div class="info-item">
-        <span class="info-label">Session:</span>
-        <span class="info-value">${escHtml(data.session_id)}</span>
-      </div>
-      <div class="info-item">
-        <span class="info-label">Status:</span>
-        <span class="status-badge status-badge--downloading">Downloading</span>
-      </div>
-    `;
-    startQueuePolling();
-  } catch (e) {
-    showError(e.message);
-  } finally {
-    setLoading(globalDownloadBtn, false);
-  }
+  } catch (e) { showError(e.message); }
+  finally { setLoading(dlConfirmBtn, false); }
 }
 
 // ══════════════════════════════════════════════════
-// Others tab
+// Others (direct files / non-YouTube video sites)
 // ══════════════════════════════════════════════════
-downloadOthersBtn.addEventListener("click", startOthersDownload);
-
 async function analyzeOthersUrl() {
   const url = globalUrlInput.value.trim();
   if (!url) { showError("Please enter a URL"); return; }
-  switchToTab("others");
+
+  othersAnalyzedData = null;
+
+  // Open modal immediately with skeleton (modal-first UX)
+  dlModalTitle.textContent = "Analyzing…";
+  dlModalMeta.innerHTML    = "";
+  dlOthersInfo.innerHTML   = `
+    <div class="skeleton skeleton-format-item"></div>
+    <div class="skeleton skeleton-format-item"></div>
+  `;
+  dlConfirmBtn.disabled = true;
+  openDownloadModal("others");
 
   setLoading(globalDownloadBtn, true);
-  const section = document.getElementById("othersInfoSection");
-  const body = document.getElementById("othersInfoBody");
-  section.classList.add("hidden");
-  othersAnalyzedData = null;
+
   try {
-    const res = await fetch("/api/analyze-url", {
+    const res  = await fetch("/api/analyze-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url })
     });
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok) throw new Error(data.error || "Analysis failed");
+
     othersAnalyzedData = data;
-    const rows = [];
-    if (data.filename) rows.push(`<div class="info-item"><span class="info-label">File:</span><span class="info-value">${escHtml(data.filename)}</span></div>`);
-    if (data.title && data.title !== data.filename) rows.push(`<div class="info-item"><span class="info-label">Title:</span><span class="info-value">${escHtml(data.title)}</span></div>`);
-    if (data.size)     rows.push(`<div class="info-item"><span class="info-label">Size:</span><span class="info-value">${escHtml(data.size)}</span></div>`);
-    rows.push(`<div class="info-item"><span class="info-label">Type:</span><span class="type-badge type-badge--${escHtml(data.type)}">${escHtml(data.type)}</span></div>`);
-    body.innerHTML = `<div class="video-info">${rows.join("")}</div>`;
-    section.classList.remove("hidden");
+
+    dlModalTitle.textContent = data.title || data.filename || "File Download";
+    dlModalMeta.innerHTML    = `<span class="type-badge type-badge--${data.type || "direct"}">${data.type || "direct"}</span>`;
+
+    let rows = "";
+    if (data.filename) rows += buildInfoRow("📄 File", data.filename);
+    if (data.size)     rows += buildInfoRow("📊 Size", data.size);
+    rows += buildInfoRow("🏷️ Type", data.type || "direct file");
+    dlOthersInfo.innerHTML = rows;
+
+    dlConfirmBtn.disabled = false;
+    urlCache[url] = { mode: "others", othersData: data };
+
   } catch (e) {
     showError(e.message);
+    closeDownloadModal();
   } finally {
     setLoading(globalDownloadBtn, false);
   }
@@ -527,266 +720,137 @@ async function analyzeOthersUrl() {
 async function startOthersDownload() {
   if (!othersAnalyzedData) return;
   const url = globalUrlInput.value.trim();
-  setLoading(downloadOthersBtn, true);
+
+  const action = await checkDuplicate(url);
+  if (action === "abort") return;
+  const rename_mode = action === "rename";
+
+  setLoading(dlConfirmBtn, true);
   try {
     const endpoint = othersAnalyzedData.type === "video"
       ? "/api/download-video-best"
       : "/api/download-direct";
-    const res = await fetch(endpoint, {
+    const res  = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url, rename_mode })
     });
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok) throw new Error(data.error || "Download failed");
-    startQueuePolling();
+    closeDownloadModal();
+    globalUrlInput.value = "";
+    othersAnalyzedData = null;
+    delete urlCache[url];
     showSuccess("Download started! Track progress in the queue below.");
-  } catch (e) {
-    showError(e.message);
-  } finally {
-    setLoading(downloadOthersBtn, false);
-  }
+    startQueuePolling();
+  } catch (e) { showError(e.message); }
+  finally { setLoading(dlConfirmBtn, false); }
 }
 
 // ══════════════════════════════════════════════════
-// Global download handler
+// YouTube — fetch info then formats
 // ══════════════════════════════════════════════════
-function handleGlobalDownload() {
-  const url = globalUrlInput.value.trim();
-  if (!url) { showError("Please enter a URL"); return; }
-  if (isYouTubeUrl(url)) fetchVideoInfo();
-  else if (isTorrentUrl(url)) startTorrentDownload();
-  else analyzeOthersUrl();
-}
-
-globalDownloadBtn.addEventListener("click", handleGlobalDownload);
-globalUrlInput.addEventListener("keypress", (e) => {
-  if (e.key === "Enter") handleGlobalDownload();
-});
-
-globalTorrentFileInput.addEventListener("change", () => {
-  const file = globalTorrentFileInput.files[0];
-  if (!file) return;
-  globalTorrentFileInput.value = "";
-  switchToTab("torrent");
-  const torrentFileName = document.getElementById("torrentFileName");
-  if (torrentFileName) torrentFileName.textContent = file.name;
-  const tabLabel = document.querySelector("label[for='torrentFileInput']");
-  if (tabLabel) tabLabel.classList.add("has-file");
-  uploadTorrentFile(file);
-});
-
-// ══════════════════════════════════════════════════
-// YouTube — fetch and progressive display
-// ══════════════════════════════════════════════════
-
-document.querySelectorAll('input[name="downloadType"]').forEach((radio) => {
-  radio.addEventListener("change", handleDownloadTypeChange);
-});
-
-downloadBtn.addEventListener("click", startDownload);
-
 async function fetchVideoInfo() {
   const url = globalUrlInput.value.trim();
   if (!url) { showError("Please enter a URL"); return; }
   fetchedUrl = url;
-  switchToTab("youtube");
 
-  setLoading(globalDownloadBtn, true);
   skippedIndices.clear();
-  currentData = null;
+  currentData         = null;
   selectedVideoFormat = null;
   selectedAudioFormat = null;
 
-  progressSection.classList.add("hidden");
-  playlistSection.classList.add("hidden");
-  showSkeletonStructure();
+  // Open modal immediately with skeleton content (modal-first UX)
+  dlModalTitle.textContent = "Loading…";
+  dlModalMeta.innerHTML    = "";
+  const skel = `
+    <div class="skeleton skeleton-format-item"></div>
+    <div class="skeleton skeleton-format-item"></div>
+    <div class="skeleton skeleton-format-item"></div>
+  `;
+  dlVideoFormatList.innerHTML  = skel;
+  dlAudioFormatListV.innerHTML = skel;
+  dlAudioFormatListA.innerHTML = skel;
+  dlConfirmBtn.disabled = true;
+  setDlTab("video");
+  dlPlaylistSection.classList.add("hidden");
+  openDownloadModal("youtube");
+
+  setLoading(globalDownloadBtn, true);
 
   try {
-    const infoResponse = await fetch("/api/fetch-info", {
+    // Phase 1: basic info
+    const infoRes  = await fetch("/api/fetch-info", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
     });
-
-    const infoData = await infoResponse.json();
-    if (!infoResponse.ok) throw new Error(infoData.error || "Failed to fetch video info");
+    const infoData = await safeJson(infoRes);
+    if (!infoRes.ok) throw new Error(infoData.error || "Failed to fetch video info");
 
     currentData = infoData;
-    displayVideoInfo(infoData);
+
+    dlModalTitle.textContent = infoData.title || "Video";
+    dlModalMeta.innerHTML    = infoData.is_playlist
+      ? `<span class="badge">${infoData.video_count || "?"} videos</span>`
+      : `<span class="type-badge type-badge--youtube">YouTube</span>`;
 
     if (infoData.is_playlist && infoData.videos) {
       playlistData = infoData.videos;
       displayPlaylistVideos(infoData.videos);
-      playlistSection.classList.remove("hidden");
+      dlPlaylistSection.classList.remove("hidden");
     }
 
-    if (infoData.formats_ready) {
-      displayFormats(infoData);
-      downloadBtn.disabled = false;
-      setLoading(globalDownloadBtn, false);
-    } else {
-      const firstVideoUrl = infoData.is_playlist && infoData.videos.length > 0
-        ? infoData.videos[0].url : null;
-      const formatsResponse = await fetch("/api/fetch-formats", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, is_playlist: infoData.is_playlist, first_video_url: firstVideoUrl }),
-      });
-      const formatsData = await formatsResponse.json();
-      if (!formatsResponse.ok) throw new Error(formatsData.error || "Failed to fetch formats");
-      currentData = { ...currentData, ...formatsData };
-      displayFormats(formatsData);
-      downloadBtn.disabled = false;
-      setLoading(globalDownloadBtn, false);
-    }
+    setLoading(globalDownloadBtn, false);
+
+    // Phase 2: formats (modal stays open, formats replace skeletons)
+    const firstVideoUrl = infoData.is_playlist && infoData.videos?.length > 0
+      ? infoData.videos[0].url : null;
+
+    const fmtRes  = await fetch("/api/fetch-formats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, is_playlist: infoData.is_playlist, first_video_url: firstVideoUrl }),
+    });
+    const fmtData = await safeJson(fmtRes);
+    if (!fmtRes.ok) throw new Error(fmtData.error || "Failed to fetch formats");
+
+    currentData = { ...currentData, ...fmtData };
+    displayFormats(fmtData);
+    dlConfirmBtn.disabled = false;
+
+    urlCache[url] = { mode: "youtube", infoData, formatsData: fmtData };
+
   } catch (error) {
     showError(error.message);
-    hideAllSections();
+    closeDownloadModal();
     setLoading(globalDownloadBtn, false);
   }
 }
 
-function showSkeletonStructure() {
-  const skeletonItems = `
-    <div class="skeleton skeleton-format-item"></div>
-    <div class="skeleton skeleton-format-item"></div>
-    <div class="skeleton skeleton-format-item"></div>
-  `;
-  videoInfo.innerHTML = `
-    <div class="info-item">
-      <div class="skeleton skeleton-icon"></div>
-      <span class="info-label">Title:</span>
-      <div class="skeleton skeleton-text" style="width:60%"></div>
-    </div>
-    <div class="info-item">
-      <div class="skeleton skeleton-icon"></div>
-      <span class="info-label">Type:</span>
-      <div class="skeleton skeleton-text" style="width:30%"></div>
-    </div>
-  `;
-  infoSection.classList.remove("hidden");
-  typeSection.classList.remove("hidden");
-  videoFormats.innerHTML = skeletonItems;
-  audioFormats.innerHTML = skeletonItems;
-  qualitySection.classList.remove("hidden");
-  downloadBtn.disabled = true;
-  downloadSection.classList.remove("hidden");
-}
-
-function displayPlaylistVideos(videos) {
-  playlistVideosContainer.innerHTML = "";
-  videos.forEach((video) => {
-    const videoItem = document.createElement("div");
-    videoItem.className = "playlist-video-item";
-    videoItem.dataset.index = video.index;
-    const duration = formatDuration(video.duration);
-    videoItem.innerHTML = `
-      <div class="playlist-video-checkbox">
-        <input type="checkbox" id="video-${video.index}" checked>
-      </div>
-      <div class="playlist-video-info">
-        <div class="playlist-video-number">${video.index}</div>
-        <div class="playlist-video-details">
-          <div class="playlist-video-title">${escHtml(video.title)}</div>
-          <div class="playlist-video-duration">${duration}</div>
-        </div>
-      </div>
-    `;
-    const checkbox = videoItem.querySelector('input[type="checkbox"]');
-    checkbox.addEventListener("change", (e) => {
-      if (e.target.checked) {
-        skippedIndices.delete(video.index);
-        videoItem.classList.remove("skipped");
-      } else {
-        skippedIndices.add(video.index);
-        videoItem.classList.add("skipped");
-      }
-      updateDownloadCount();
-    });
-    playlistVideosContainer.appendChild(videoItem);
-  });
-  updateDownloadCount();
-}
-
-function formatDuration(seconds) {
-  if (!seconds) return "Unknown";
-  const hours   = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs    = seconds % 60;
-  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  return `${minutes}:${String(secs).padStart(2, "0")}`;
-}
-
-function updateDownloadCount() {
-  if (!currentData || !currentData.videos) return;
-  const totalVideos  = currentData.videos.length;
-  const selectedCount = totalVideos - skippedIndices.size;
-  const countElement = document.getElementById("selectedCount");
-  if (countElement) countElement.textContent = `${selectedCount} of ${totalVideos} videos selected`;
-}
-
-function selectAllVideos() {
-  skippedIndices.clear();
-  document.querySelectorAll(".playlist-video-item").forEach((item) => {
-    item.querySelector('input[type="checkbox"]').checked = true;
-    item.classList.remove("skipped");
-  });
-  updateDownloadCount();
-}
-
-function deselectAllVideos() {
-  document.querySelectorAll(".playlist-video-item").forEach((item) => {
-    const index = parseInt(item.dataset.index);
-    skippedIndices.add(index);
-    item.querySelector('input[type="checkbox"]').checked = false;
-    item.classList.add("skipped");
-  });
-  updateDownloadCount();
-}
-
-function displayVideoInfo(data) {
-  const playlistBadge = data.is_playlist
-    ? `<span class="badge">${data.video_count} videos</span>` : "";
-  videoInfo.innerHTML = `
-    <div class="info-item">
-      <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
-        <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-      </svg>
-      <span class="info-label">Title:</span>
-      <span class="info-value">${escHtml(data.title)}</span>
-    </div>
-    <div class="info-item">
-      <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
-      </svg>
-      <span class="info-label">Type:</span>
-      <span class="info-value">
-        ${data.is_playlist ? "Playlist" : "Single Video"}
-        ${playlistBadge}
-      </span>
-    </div>
-  `;
-}
-
 function displayFormats(data) {
-  videoFormats.innerHTML = "";
-  data.video_formats.forEach((format, index) => {
-    videoFormats.appendChild(createFormatItem(format, "video", index));
+  dlVideoFormatList.innerHTML = "";
+  data.video_formats.forEach((fmt, i) =>
+    dlVideoFormatList.appendChild(createFormatItem(fmt, "video", i)));
+
+  dlAudioFormatListV.innerHTML = "";
+  dlAudioFormatListA.innerHTML = "";
+  data.audio_formats.forEach((fmt, i) => {
+    dlAudioFormatListV.appendChild(createFormatItem(fmt, "audio", i));
+    dlAudioFormatListA.appendChild(createFormatItem(fmt, "audio", i));
   });
-  audioFormats.innerHTML = "";
-  data.audio_formats.forEach((format, index) => {
-    audioFormats.appendChild(createFormatItem(format, "audio", index));
-  });
-  if (data.video_formats.length > 0) selectFormat(videoFormats.children[0], data.video_formats[0], "video");
-  if (data.audio_formats.length > 0) selectFormat(audioFormats.children[0], data.audio_formats[0], "audio");
+
+  if (data.video_formats.length > 0)
+    selectFormat(dlVideoFormatList.children[0], data.video_formats[0], "video");
+  if (data.audio_formats.length > 0)
+    selectFormat(dlAudioFormatListV.children[0], data.audio_formats[0], "audio");
 }
 
 function createFormatItem(format, type, index) {
   const div = document.createElement("div");
   div.className = `format-item format-item--${type}`;
-  const detail = type === "video" ? format.res : `${Math.round(format.abr)}kbps`;
+  div.dataset.formatId = String(format.id);
+  const detail = type === "video" ? format.res : `${Math.round(format.abr || 0)}kbps`;
   div.innerHTML = `
     <div class="format-main">
       <span class="format-ext">${format.ext}</span>
@@ -799,112 +863,124 @@ function createFormatItem(format, type, index) {
 }
 
 function selectFormat(element, format, type) {
-  const container = type === "video" ? videoFormats : audioFormats;
-  container.querySelectorAll(".format-item").forEach(item => item.classList.remove("selected"));
-  element.classList.add("selected");
-  if (type === "video") selectedVideoFormat = format.id;
-  else selectedAudioFormat = format.id;
+  if (type === "video") {
+    dlVideoFormatList.querySelectorAll(".format-item").forEach(el => el.classList.remove("selected"));
+    element.classList.add("selected");
+    selectedVideoFormat = format.id;
+  } else {
+    const fid = String(format.id);
+    [dlAudioFormatListV, dlAudioFormatListA].forEach(list => {
+      list.querySelectorAll(".format-item").forEach(el => {
+        el.classList.toggle("selected", el.dataset.formatId === fid);
+      });
+    });
+    selectedAudioFormat = format.id;
+  }
 }
 
-function handleDownloadTypeChange(e) {
-  if (e.target.value === "audio") videoQualityContainer.style.display = "none";
-  else videoQualityContainer.style.display = "block";
+function displayPlaylistVideos(videos) {
+  dlPlaylistVideos.innerHTML = "";
+  videos.forEach(video => {
+    const item = document.createElement("div");
+    item.className = "playlist-video-item";
+    item.dataset.index = video.index;
+    item.innerHTML = `
+      <div class="playlist-video-checkbox">
+        <input type="checkbox" id="video-${video.index}" checked>
+      </div>
+      <div class="playlist-video-info">
+        <div class="playlist-video-number">${video.index}</div>
+        <div class="playlist-video-details">
+          <div class="playlist-video-title">${escHtml(video.title)}</div>
+          <div class="playlist-video-duration">${formatDuration(video.duration)}</div>
+        </div>
+      </div>
+    `;
+    item.querySelector('input[type="checkbox"]').addEventListener("change", e => {
+      if (e.target.checked) { skippedIndices.delete(video.index); item.classList.remove("skipped"); }
+      else                  { skippedIndices.add(video.index);    item.classList.add("skipped"); }
+      updateDownloadCount();
+    });
+    dlPlaylistVideos.appendChild(item);
+  });
+  updateDownloadCount();
 }
 
+function formatDuration(seconds) {
+  if (!seconds) return "Unknown";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function updateDownloadCount() {
+  if (!currentData?.videos) return;
+  const total    = currentData.videos.length;
+  const selected = total - skippedIndices.size;
+  if (dlSelectedCount) dlSelectedCount.textContent = `${selected} of ${total} videos selected`;
+}
+
+function selectAllVideos() {
+  skippedIndices.clear();
+  dlPlaylistVideos.querySelectorAll(".playlist-video-item").forEach(item => {
+    item.querySelector('input[type="checkbox"]').checked = true;
+    item.classList.remove("skipped");
+  });
+  updateDownloadCount();
+}
+
+function deselectAllVideos() {
+  dlPlaylistVideos.querySelectorAll(".playlist-video-item").forEach(item => {
+    skippedIndices.add(parseInt(item.dataset.index));
+    item.querySelector('input[type="checkbox"]').checked = false;
+    item.classList.add("skipped");
+  });
+  updateDownloadCount();
+}
+
+// ══════════════════════════════════════════════════
+// Start YouTube download
+// ══════════════════════════════════════════════════
 async function startDownload() {
-  const downloadType = document.querySelector('input[name="downloadType"]:checked').value;
+  const downloadType = dlTabMode;
+
   if (!selectedAudioFormat) { showError("Please select an audio quality"); return; }
   if (downloadType === "video" && !selectedVideoFormat) { showError("Please select a video quality"); return; }
 
-  setLoading(downloadBtn, true);
-  progressSection.classList.remove("hidden");
+  const action = await checkDuplicate(fetchedUrl);
+  if (action === "abort") return;
+  const rename_mode = action === "rename";
 
+  setLoading(dlConfirmBtn, true);
   try {
-    const response = await fetch("/api/download", {
+    const res  = await fetch("/api/download", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        url: fetchedUrl,
-        download_type: downloadType,
+        url:             fetchedUrl,
+        download_type:   downloadType,
         video_format_id: selectedVideoFormat,
         audio_format_id: selectedAudioFormat,
-        is_playlist: currentData.is_playlist,
-        skip_indices: Array.from(skippedIndices),
+        is_playlist:     currentData.is_playlist,
+        skip_indices:    Array.from(skippedIndices),
+        rename_mode,
       }),
     });
-
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Failed to start download");
-
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data.error || "Failed to start download");
+    closeDownloadModal();
+    globalUrlInput.value = "";
+    delete urlCache[fetchedUrl];
+    showSuccess("Download started! Track progress in the queue below.");
     startQueuePolling();
-    pollDownloadStatus(data.session_id);
-  } catch (error) {
-    showError(error.message);
-    setLoading(downloadBtn, false);
-    progressSection.classList.add("hidden");
-  }
-}
-
-async function pollDownloadStatus(sessionId) {
-  const interval = setInterval(async () => {
-    try {
-      const response = await fetch(`/api/download-status/${sessionId}`);
-      const data = await response.json();
-      if (!response.ok) throw new Error("Failed to get download status");
-
-      progressFill.style.width = `${data.progress}%`;
-      progressText.textContent = data.message;
-
-      if (data.status === "completed") {
-        clearInterval(interval);
-        setLoading(downloadBtn, false);
-        showSuccess("Download completed successfully! Check your downloads folder.");
-        setTimeout(() => {
-          progressSection.classList.add("hidden");
-          progressFill.style.width = "0%";
-        }, 3000);
-      } else if (data.status === "error") {
-        clearInterval(interval);
-        setLoading(downloadBtn, false);
-        showError(data.message);
-      }
-    } catch (error) {
-      clearInterval(interval);
-      setLoading(downloadBtn, false);
-      showError(error.message);
-    }
-  }, 1000);
+  } catch (error) { showError(error.message); }
+  finally { setLoading(dlConfirmBtn, false); }
 }
 
 // ══════════════════════════════════════════════════
-// Utilities
-// ══════════════════════════════════════════════════
-function setLoading(button, isLoading) {
-  const btnText = button.querySelector(".btn-text");
-  const spinner = button.querySelector(".spinner");
-  if (isLoading) {
-    btnText.classList.add("hidden");
-    spinner.classList.remove("hidden");
-    button.disabled = true;
-  } else {
-    btnText.classList.remove("hidden");
-    spinner.classList.add("hidden");
-    button.disabled = false;
-  }
-}
-
-function hideAllSections() {
-  infoSection.classList.add("hidden");
-  typeSection.classList.add("hidden");
-  qualitySection.classList.add("hidden");
-  downloadSection.classList.add("hidden");
-  progressSection.classList.add("hidden");
-  playlistSection.classList.add("hidden");
-  downloadBtn.disabled = false;
-}
-
-// ══════════════════════════════════════════════════
-// SweetAlert2 — themed helpers
+// SweetAlert2 themed helpers
 // ══════════════════════════════════════════════════
 const swalDark = Swal.mixin({
   background: "#1a1c23",
@@ -922,17 +998,12 @@ const swalToast = swalDark.mixin({
   timerProgressBar: true,
 });
 
-function showError(message) {
-  swalDark.fire({ icon: "error", title: "Error", text: message });
-}
-
-function showSuccess(message) {
-  swalToast.fire({ icon: "success", title: message });
-}
+function showError(message)   { swalDark.fire({ icon: "error",   title: "Error",   text: message }); }
+function showSuccess(message) { swalToast.fire({ icon: "success", title: message }); }
 
 // ══════════════════════════════════════════════════
-// Init — restore queue state immediately on page load / refresh
+// Init
 // ══════════════════════════════════════════════════
 loadDrives();
-refreshAllQueues();   // show persisted downloads right away without waiting 2s
+refreshAllQueues();
 startQueuePolling();

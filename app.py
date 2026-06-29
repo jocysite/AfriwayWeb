@@ -25,30 +25,39 @@ import shutil
 
 def _find_aria2c():
     """Return the full path to aria2c, or None if not found.
-    Checks PATH first, then the project directory, then common install locations.
-    Users can simply drop aria2c.exe next to app.py and it will be found.
+    Checks PATH, the bundled static folder, project directory, then common installs.
     """
     # 1. Already on PATH
     on_path = shutil.which('aria2c')
     if on_path:
         return on_path
 
-    # 2. Next to the exe (frozen) or app.py (dev)
+    # 2. Resolve the base directory (handles PyInstaller frozen, Electron spawn, and dev)
     if getattr(sys, 'frozen', False):
         project_dir = os.path.dirname(sys.executable)
     else:
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-    here = os.path.join(project_dir, 'aria2c.exe')
-    if os.path.isfile(here):
-        return here
+        try:
+            project_dir = os.path.dirname(os.path.abspath(__file__))
+        except Exception:
+            project_dir = os.getcwd()
 
-    # 2b. Inside any direct subdirectory (e.g. static/aria2-1.37.0-win-64bit-build1/)
-    import glob as _glob
-    for found in _glob.glob(os.path.join(project_dir, '**', 'aria2c.exe'), recursive=True):
-        if os.path.isfile(found):
-            return found
+    # Also consider the current working directory (Electron sets cwd to the app folder)
+    dirs_to_search = list(dict.fromkeys([project_dir, os.getcwd()]))
 
-    # 3. Common install locations (Windows)
+    for base in dirs_to_search:
+        # 2a. Known bundled location (static/aria2-*/aria2c.exe)
+        static_dir = os.path.join(base, 'static')
+        if os.path.isdir(static_dir):
+            for entry in os.listdir(static_dir):
+                candidate = os.path.join(static_dir, entry, 'aria2c.exe')
+                if os.path.isfile(candidate):
+                    return candidate
+        # 2b. Next to app.py
+        here = os.path.join(base, 'aria2c.exe')
+        if os.path.isfile(here):
+            return here
+
+    # 3. Common Windows install locations
     candidates = [
         os.path.join(os.environ.get('LOCALAPPDATA', ''), 'aria2', 'aria2c.exe'),
         os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'WinGet', 'Links', 'aria2c.exe'),
@@ -221,6 +230,13 @@ def get_downloads_folder():
         return str(Path.home() / "Downloads")
 
 
+@app.errorhandler(Exception)
+def handle_unhandled_exception(e):
+    """Ensure all unhandled exceptions return JSON instead of Flask's HTML error page."""
+    print(f'❌ Unhandled exception: {e}')
+    return jsonify({'error': str(e)}), 500
+
+
 @app.route('/')
 def index():
     """Serve the main page"""
@@ -334,9 +350,9 @@ def fetch_info():
     except yt_dlp.utils.DownloadError as e:
         print(f"❌ Error: {str(e)}\n")
         return jsonify({'error': str(e)}), 500
-    except (KeyError, ValueError) as e:
-        print(f"❌ Data extraction error: {str(e)}\n")
-        return jsonify({'error': f'Data extraction error: {str(e)}'}), 500
+    except Exception as e:
+        print(f"❌ Unexpected error in fetch-info: {str(e)}\n")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/fetch-formats', methods=['POST'])
@@ -392,9 +408,9 @@ def fetch_formats():
     except yt_dlp.utils.DownloadError as e:
         print(f"❌ Error: {str(e)}\n")
         return jsonify({'error': str(e)}), 500
-    except (KeyError, ValueError, IndexError) as e:
-        print(f"❌ Data extraction error: {str(e)}\n")
-        return jsonify({'error': f'Data extraction error: {str(e)}'}), 500
+    except Exception as e:
+        print(f"❌ Unexpected error in fetch-formats: {str(e)}\n")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/download', methods=['POST'])
@@ -407,13 +423,12 @@ def download():
         video_format_id = data.get('video_format_id')
         audio_format_id = data.get('audio_format_id')
         is_playlist = data.get('is_playlist', False)
-        # NEW: List of indices to skip
         skip_indices = data.get('skip_indices', [])
+        rename_mode = data.get('rename_mode', False)  # True = add unique suffix instead of overwriting
 
         if not url or not audio_format_id:
             return jsonify({'error': 'Missing required parameters'}), 400
 
-        # Create session ID
         session_id = str(uuid.uuid4())
         download_sessions[session_id] = {
             'status': 'downloading',
@@ -443,19 +458,15 @@ def download():
             print(f"⏭️  Skipping videos: {skip_indices}")
         print()
 
-        # Start download in background thread
         thread = threading.Thread(
             target=_download_thread,
             args=(session_id, url, download_type, video_format_id,
-                  audio_format_id, is_playlist, skip_indices)
+                  audio_format_id, is_playlist, skip_indices, None, rename_mode)
         )
         thread.daemon = True
         thread.start()
 
-        return jsonify({
-            'success': True,
-            'session_id': session_id
-        })
+        return jsonify({'success': True, 'session_id': session_id})
 
     except (ValueError, KeyError) as e:
         print(f"❌ Error: {str(e)}\n")
@@ -472,7 +483,7 @@ def download_status(session_id):
     return jsonify(session)
 
 
-def _download_thread(session_id, url, download_type, video_format_id, audio_format_id, is_playlist, skip_indices, save_dir=None):
+def _download_thread(session_id, url, download_type, video_format_id, audio_format_id, is_playlist, skip_indices, save_dir=None, rename_mode=False):
     """Background thread for downloading with smart quality fallback"""
     evt = threading.Event()
     evt.set()
@@ -497,6 +508,12 @@ def _download_thread(session_id, url, download_type, video_format_id, audio_form
             else:
                 dest_folder = os.path.join(afriway_base, 'Videos')
                 output_template = os.path.join(dest_folder, '%(title)s.%(ext)s')
+
+        # Rename mode: append unique ID so the file never collides with existing ones
+        if rename_mode and not save_dir:
+            short_id = session_id[:8]
+            if output_template.endswith('.%(ext)s'):
+                output_template = output_template[:-len('.%(ext)s')] + f' ({short_id}).%(ext)s'
 
         last_video_percent = -1
         last_audio_percent = -1
@@ -779,6 +796,7 @@ def api_download_direct():
         url = (data.get('url') or '').strip()
         if not url:
             return jsonify({'error': 'URL is required'}), 400
+        rename_mode = data.get('rename_mode', False)
         filename = url.split('/')[-1].split('?')[0] or 'file'
         session_id = str(uuid.uuid4())
         download_sessions[session_id] = {
@@ -795,7 +813,7 @@ def api_download_direct():
         _save_sessions()
         thread = threading.Thread(
             target=_download_direct_thread,
-            args=(session_id, url, filename)
+            args=(session_id, url, filename, None, rename_mode)
         )
         thread.daemon = True
         thread.start()
@@ -804,7 +822,7 @@ def api_download_direct():
         return jsonify({'error': str(e)}), 500
 
 
-def _download_direct_thread(session_id, url, filename, resume_dir=None):
+def _download_direct_thread(session_id, url, filename, resume_dir=None, rename_mode=False):
     evt = threading.Event()
     evt.set()
     _pause_events[session_id] = evt
@@ -815,6 +833,16 @@ def _download_direct_thread(session_id, url, filename, resume_dir=None):
             afriway_base = _ensure_afriway_dirs()
             save_dir = os.path.join(afriway_base, _get_type_folder(filename))
         dest = os.path.join(save_dir, filename)
+
+        # Rename mode: find next available filename (file.txt → file (1).txt → file (2).txt …)
+        if rename_mode and not resume_dir and os.path.exists(dest):
+            base, ext = os.path.splitext(dest)
+            i = 1
+            while os.path.exists(dest):
+                dest = f"{base} ({i}){ext}"
+                i += 1
+            filename = os.path.basename(dest)
+            download_sessions[session_id]['name'] = filename
 
         # Resume from partial file via HTTP Range if the server supports it
         resume_pos = os.path.getsize(dest) if os.path.exists(dest) else 0
@@ -1113,6 +1141,28 @@ def api_show_in_folder():
             return jsonify({'success': True})
         else:
             return jsonify({'error': 'file_not_found', 'filepath': filepath}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/open-file', methods=['POST'])
+def api_open_file():
+    """Open a downloaded file with the default OS application."""
+    data = request.json
+    filepath = (data.get('filepath') or '').strip()
+    if not filepath:
+        return jsonify({'error': 'No filepath provided'}), 400
+    norm = os.path.normpath(filepath)
+    if not os.path.isfile(norm):
+        return jsonify({'error': 'file_not_found', 'filepath': filepath}), 404
+    try:
+        if os.name == 'nt':
+            os.startfile(norm)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', norm])
+        else:
+            subprocess.Popen(['xdg-open', norm])
+        return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

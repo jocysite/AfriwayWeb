@@ -1,4 +1,4 @@
-oconst { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog } = require("electron");
 const path = require("path");
 const { spawn } = require("child_process");
 const net = require("net");
