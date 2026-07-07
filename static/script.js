@@ -34,7 +34,6 @@ const dlYoutubeContent   = document.getElementById("dlYoutubeContent");
 const dlTorrentContent   = document.getElementById("dlTorrentContent");
 const dlOthersContent    = document.getElementById("dlOthersContent");
 const dlVideoFormatList  = document.getElementById("dlVideoFormatList");
-const dlAudioFormatListV = document.getElementById("dlAudioFormatListV");
 const dlAudioFormatListA = document.getElementById("dlAudioFormatListA");
 const dlPlaylistSection  = document.getElementById("dlPlaylistSection");
 const dlPlaylistVideos   = document.getElementById("dlPlaylistVideos");
@@ -49,6 +48,7 @@ const dlRefreshBtn       = document.getElementById("dlRefreshBtn");
 // ══════════════════════════════════════════════════
 function openSettings() {
   document.getElementById("settingsModal").classList.remove("hidden");
+  loadDiskSpace();
 }
 
 function closeSettings() {
@@ -56,6 +56,29 @@ function closeSettings() {
 }
 
 document.getElementById("settingsBtn").addEventListener("click", openSettings);
+
+// ══════════════════════════════════════════════════
+// Free Space (disk usage for the current download drive)
+// ══════════════════════════════════════════════════
+async function loadDiskSpace() {
+  const fill      = document.getElementById("storageBarFill");
+  const usedLabel = document.getElementById("storageUsedLabel");
+  const freeLabel = document.getElementById("storageFreeLabel");
+  if (!fill || !usedLabel || !freeLabel) return;
+  try {
+    const res  = await fetch("/api/disk-space");
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || "unavailable");
+    const pct = data.total > 0 ? (data.used / data.total) * 100 : 0;
+    fill.style.width      = Math.min(pct, 100) + "%";
+    fill.style.background = pct > 90 ? "#e74c3c" : pct > 75 ? "#e67e22" : "";
+    usedLabel.textContent = `${formatFileSize(data.used)} used`;
+    freeLabel.textContent = `${formatFileSize(data.free)} free of ${formatFileSize(data.total)}`;
+  } catch (_) {
+    usedLabel.textContent = "Free space unavailable";
+    freeLabel.textContent = "";
+  }
+}
 
 // ══════════════════════════════════════════════════
 // Download Modal
@@ -68,6 +91,42 @@ function openDownloadModal(mode) {
   if (mode === "torrent" || mode === "torrent_file") dlTorrentContent.classList.remove("hidden");
   if (mode === "others")                         dlOthersContent.classList.remove("hidden");
   downloadModal.classList.remove("hidden");
+  loadDownloadLocation();
+}
+
+// ══════════════════════════════════════════════════
+// Download location — full folder, not just a drive
+// ══════════════════════════════════════════════════
+async function loadDownloadLocation() {
+  const el = document.getElementById("dlLocationPath");
+  if (!el) return;
+  try {
+    const res  = await fetch("/api/get-location");
+    const data = await res.json();
+    el.textContent = data.path || "Downloads/Afriway";
+    el.title = data.path || "";
+  } catch (_) {}
+}
+
+async function pickDownloadLocation() {
+  if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.pick_folder) {
+    showError("Choosing a folder is only available in the desktop app.");
+    return;
+  }
+  try {
+    const folder = await window.pywebview.api.pick_folder();
+    if (!folder) return; // user cancelled
+    const res  = await fetch("/api/set-location", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location: folder })
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { showError(data.error || "Could not set folder"); return; }
+    await loadDownloadLocation();
+    loadDiskSpace();
+    showSuccess("Downloads will now be saved under: " + data.path);
+  } catch (e) { showError(e.message); }
 }
 
 function closeDownloadModal() {
@@ -105,6 +164,8 @@ function restoreFromCache(url) {
     fetchedUrl  = url;
     currentData = { ...cached.infoData, ...cached.formatsData };
     skippedIndices.clear();
+    selectedVideoFormat = null;
+    selectedAudioFormat = null;
 
     dlModalTitle.textContent = cached.infoData.title || "Video";
     dlModalMeta.innerHTML    = cached.infoData.is_playlist
@@ -157,16 +218,6 @@ function setDlTab(mode) {
   document.getElementById("tabAudioOnly").classList.toggle("dl-tab--active",  !isVideo);
   document.getElementById("dlVideoPane").classList.toggle("hidden", !isVideo);
   document.getElementById("dlAudioPane").classList.toggle("hidden",  isVideo);
-
-  if (!isVideo) {
-    const selectedV = dlAudioFormatListV.querySelector(".format-item.selected");
-    if (selectedV) {
-      const fid = selectedV.dataset.formatId;
-      dlAudioFormatListA.querySelectorAll(".format-item").forEach(el => {
-        el.classList.toggle("selected", el.dataset.formatId === fid);
-      });
-    }
-  }
 }
 
 // Escape closes whichever modal is open
@@ -224,6 +275,7 @@ if (savePartitionBtn) {
       if (data.success) {
         if (afriwayPathPreview) afriwayPathPreview.textContent = data.path || "";
         showSuccess("Download location updated!");
+        loadDiskSpace();
       } else {
         showError(data.error || "Failed to set partition");
       }
@@ -246,8 +298,89 @@ async function refreshAllQueues() {
     const downloads = await res.json();
     cachedDownloads = downloads;
     renderQueue("queue-all", downloads);
+    renderPlaylistProgress();
+    updateClearButtons();
   } catch (_) {}
 }
+
+function updateClearButtons() {
+  const clearBtn    = document.getElementById("clearSelectedBtn");
+  const clearAllBtn = document.getElementById("clearAllBtn");
+  if (clearBtn)    clearBtn.disabled    = selectedSessions.size === 0;
+  if (clearAllBtn) clearAllBtn.disabled = cachedDownloads.length === 0;
+}
+
+// ══════════════════════════════════════════════════
+// Playlist per-video progress modal
+// ══════════════════════════════════════════════════
+let activePlaylistSid = null;
+
+function openPlaylistProgress(sid) {
+  activePlaylistSid = sid;
+  document.getElementById("playlistProgressModal")?.classList.remove("hidden");
+  renderPlaylistProgress();
+}
+
+function closePlaylistProgress() {
+  activePlaylistSid = null;
+  document.getElementById("playlistProgressModal")?.classList.add("hidden");
+}
+
+function renderPlaylistProgress() {
+  if (!activePlaylistSid) return;
+  const modal = document.getElementById("playlistProgressModal");
+  if (!modal || modal.classList.contains("hidden")) return;
+
+  const d = cachedDownloads.find(x => x.session_id === activePlaylistSid);
+  if (!d) { closePlaylistProgress(); return; }
+
+  const titleEl = document.getElementById("pvModalTitle");
+  const metaEl  = document.getElementById("pvModalMeta");
+  if (titleEl) titleEl.textContent = (d.name && d.name !== d.url) ? d.name : "Playlist Download";
+  if (metaEl)  metaEl.innerHTML = `<span class="status-badge status-badge--${d.status}">${d.status}</span>`;
+
+  const videos  = d.videos || [];
+  const active  = videos.filter(v => v.status !== "skipped");
+  const overallPct = active.length
+    ? active.reduce((sum, v) => sum + (v.progress || 0), 0) / active.length
+    : 0;
+  const doneCount = active.filter(v => v.status === "completed").length;
+
+  const overallEl = document.getElementById("pvOverall");
+  if (overallEl) {
+    overallEl.innerHTML =
+      `<span>📊 Overall: ${overallPct.toFixed(1)}%</span><span>${doneCount}/${active.length} videos completed</span>`;
+  }
+
+  const listEl = document.getElementById("pvVideoList");
+  if (!listEl) return;
+  listEl.innerHTML = videos.map(v => {
+    const pct       = v.status === "skipped" ? 0 : (v.progress || 0);
+    const speedStr  = v.status === "downloading" ? formatSpeed(v.speed) : "";
+    const openable  = v.status === "completed" && v.filepath;
+    const titleAttrs = openable
+      ? `data-filepath="${escHtml(v.filepath)}" onclick="openFile(this.dataset.filepath)"`
+      : "";
+    return `
+      <div class="pv-item">
+        <div class="pv-item-top">
+          <div class="pv-item-number">${v.index}</div>
+          <div class="pv-item-title${openable ? ' pv-item-title--clickable' : ''}" ${titleAttrs} title="${escHtml(v.title || "")}">${escHtml(v.title || "Video " + v.index)}</div>
+          <div class="pv-item-pct">${v.status === "skipped" ? "—" : pct.toFixed(1) + "%"}</div>
+        </div>
+        <div class="pv-item-bar"><div class="pv-item-fill" style="width:${pct}%"></div></div>
+        <div class="pv-item-meta">
+          <span class="status-badge status-badge--${v.status}">${v.status}</span>
+          ${speedStr ? `<span class="speed-badge">⚡ ${speedStr}</span>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closePlaylistProgress();
+});
 
 function renderQueue(queueId, downloads) {
   const container = document.getElementById(queueId);
@@ -273,6 +406,14 @@ function renderQueue(queueId, downloads) {
   container.innerHTML = filtered.map(d => buildQueueItem(d)).join("");
 }
 
+function formatSpeed(bps) {
+  if (!bps || bps <= 0) return '';
+  if (bps >= 1024 * 1024 * 1024) return (bps / (1024 * 1024 * 1024)).toFixed(2) + ' GB/s';
+  if (bps >= 1024 * 1024)        return (bps / (1024 * 1024)).toFixed(1) + ' MB/s';
+  if (bps >= 1024)                return (bps / 1024).toFixed(0) + ' KB/s';
+  return bps + ' B/s';
+}
+
 function buildQueueItem(d) {
   const icons = { youtube: "▶️", torrent: "🔗", direct: "📦", video: "🎬" };
   const icon  = icons[d.type] || "📥";
@@ -281,12 +422,17 @@ function buildQueueItem(d) {
   const typeBadge   = `<span class="type-badge type-badge--${d.type || "direct"}">${d.type || "file"}</span>`;
   const statusBadge = `<span class="status-badge status-badge--${d.status}">${d.status}</span>`;
   const showBar     = d.status === "downloading" || d.status === "paused";
+  const speedStr    = d.status === "downloading" ? formatSpeed(d.speed) : '';
+  const speedBadge  = speedStr ? `<span class="speed-badge">⚡ ${speedStr}</span>` : '';
 
-  const isClickable = d.status === "completed" && d.file_exists === true && d.filepath;
+  const isPlaylist  = !!d.is_playlist;
+  const isClickable = isPlaylist || (d.status === "completed" && d.file_exists === true && d.filepath);
   const nameClass   = isClickable ? "queue-item-name queue-item-name--clickable" : "queue-item-name";
-  const nameAttrs   = isClickable
-    ? `data-filepath="${escHtml(d.filepath)}" onclick="openFile(this.dataset.filepath)"`
-    : "";
+  const nameAttrs   = isPlaylist
+    ? `onclick="openPlaylistProgress('${sid}')"`
+    : (isClickable
+        ? `data-filepath="${escHtml(d.filepath)}" onclick="openFile(this.dataset.filepath)"`
+        : "");
 
   let folderBtn = "";
   if (d.status === "completed" && d.filepath) {
@@ -298,6 +444,10 @@ function buildQueueItem(d) {
       folderBtn = `<button type="button" class="btn-show-folder"
         data-filepath="${escHtml(d.filepath)}" onclick="showInFolder(this.dataset.filepath)">📂 Show in folder</button>`;
     }
+  } else if (d.save_dir) {
+    // Destination folder is known before completion too (downloading/paused/error/interrupted)
+    folderBtn = `<button type="button" class="btn-show-folder"
+      data-filepath="${escHtml(d.save_dir)}" onclick="showInFolder(this.dataset.filepath)">📂 Show in folder</button>`;
   }
 
   let pauseBtn = "";
@@ -327,7 +477,7 @@ function buildQueueItem(d) {
       <div class="queue-item-icon">${icon}</div>
       <div class="queue-item-info">
         <div class="${nameClass}" ${nameAttrs} title="${escHtml(name)}">${escHtml(name)}</div>
-        <div class="queue-item-meta">${typeBadge} ${statusBadge}${pauseBtn}${folderBtn}${copyBtn}</div>
+        <div class="queue-item-meta">${typeBadge} ${statusBadge}${speedBadge}${pauseBtn}${folderBtn}${copyBtn}</div>
         ${showBar ? `
           <div class="queue-item-progress-bar">
             <div class="queue-item-progress-fill" style="width:${d.progress || 0}%"></div>
@@ -383,7 +533,7 @@ function openMissingModal(filepath) {
     html: `
       <p style="margin:0 0 12px;color:#d4c4b0;font-size:14px">The file can no longer be found at its saved location:</p>
       <code style="display:block;background:rgba(255,255,255,0.05);border:1px solid rgba(212,196,55,0.22);
-        border-radius:8px;padding:10px 14px;font-size:12px;color:#D4AF37;word-break:break-all;
+        border-radius:8px;padding:10px 14px;font-size:12px;color:#C9A227;word-break:break-all;
         text-align:left;font-family:Consolas,Monaco,monospace">${escHtml(filepath)}</code>
       <p style="margin:12px 0 0;color:#d4c4b0;font-size:14px">It may have been moved, renamed, or deleted.</p>
     `,
@@ -396,6 +546,7 @@ function openMissingModal(filepath) {
 function toggleSessionSelect(sid, checked) {
   if (checked) selectedSessions.add(sid);
   else         selectedSessions.delete(sid);
+  updateClearButtons();
 }
 
 function toggleSelectAll(queueId, checked) {
@@ -406,6 +557,7 @@ function toggleSelectAll(queueId, checked) {
     if (checked) selectedSessions.add(cb.dataset.sid);
     else         selectedSessions.delete(cb.dataset.sid);
   });
+  updateClearButtons();
 }
 
 async function pauseDownload(sid) {
@@ -439,6 +591,64 @@ async function resumeSelected(queueId) {
       if (!res.ok) { const d = await res.json(); showError(d.error || "Could not resume"); }
     } catch (_) {}
   }
+  refreshAllQueues();
+}
+
+async function clearSelected(queueId) {
+  const container = document.getElementById(queueId);
+  if (!container) return;
+  const ids = [...container.querySelectorAll(".queue-item-check:checked")].map(cb => cb.dataset.sid);
+  if (!ids.length) return;
+
+  const result = await swalDark.fire({
+    icon: "warning",
+    title: "Clear selected downloads?",
+    text: `This will remove ${ids.length} download${ids.length > 1 ? "s" : ""} from the list. Downloaded files will not be deleted.`,
+    showCancelButton: true,
+    confirmButtonText: "🗑 Clear",
+    cancelButtonText: "Cancel",
+  });
+  if (!result.isConfirmed) return;
+
+  for (const sid of ids) {
+    try {
+      await fetch(`/api/remove/${sid}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delete_file: false })
+      });
+    } catch (_) {}
+    selectedSessions.delete(sid);
+  }
+  showSuccess("Cleared selected downloads from the list.");
+  refreshAllQueues();
+}
+
+async function clearAllDownloads() {
+  if (!cachedDownloads.length) return;
+  const ids = cachedDownloads.map(d => d.session_id);
+
+  const result = await swalDark.fire({
+    icon: "warning",
+    title: "Clear all downloads?",
+    text: `This will remove all ${ids.length} download${ids.length > 1 ? "s" : ""} from the list. Downloaded files will not be deleted.`,
+    showCancelButton: true,
+    confirmButtonText: "🗑 Clear All",
+    cancelButtonText: "Cancel",
+  });
+  if (!result.isConfirmed) return;
+
+  for (const sid of ids) {
+    try {
+      await fetch(`/api/remove/${sid}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delete_file: false })
+      });
+    } catch (_) {}
+  }
+  selectedSessions.clear();
+  showSuccess("Cleared all downloads from the list.");
   refreshAllQueues();
 }
 
@@ -548,7 +758,7 @@ async function checkDuplicate(url) {
     icon: "warning",
     title: "Already Downloaded",
     html: `<p style="margin:0 0 10px;color:#d4c4b0;font-size:14px">This URL was already downloaded:</p>
-           <strong style="color:#D4AF37;word-break:break-all">${escHtml(dupe.name)}</strong>
+           <strong style="color:#C9A227;word-break:break-all">${escHtml(dupe.name)}</strong>
            <p style="margin:10px 0 0;color:#d4c4b0;font-size:13px">What would you like to do?</p>`,
     showDenyButton: true,
     showCancelButton: true,
@@ -773,7 +983,6 @@ async function fetchVideoInfo() {
     <div class="skeleton skeleton-format-item"></div>
   `;
   dlVideoFormatList.innerHTML  = skel;
-  dlAudioFormatListV.innerHTML = skel;
   dlAudioFormatListA.innerHTML = skel;
   dlConfirmBtn.disabled = true;
   setDlTab("video");
@@ -832,6 +1041,18 @@ async function fetchVideoInfo() {
   }
 }
 
+// Video defaults to 720p (closest available) so the pick is sensible without
+// forcing users to hunt for it. Audio (a separate standalone file) is opt-in —
+// no default there, so it isn't downloaded unless the user actively picks a quality.
+function pickDefaultVideoIndex(formats) {
+  let bestIdx = 0, bestDiff = Infinity;
+  formats.forEach((fmt, i) => {
+    const diff = Math.abs((fmt.height || 0) - 720);
+    if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+  });
+  return bestIdx;
+}
+
 function displayFormats(data) {
   const noFmt = `<div class="format-empty">No formats available</div>`;
 
@@ -841,20 +1062,16 @@ function displayFormats(data) {
   } else {
     data.video_formats.forEach((fmt, i) =>
       dlVideoFormatList.appendChild(createFormatItem(fmt, "video", i)));
-    selectFormat(dlVideoFormatList.children[0], data.video_formats[0], "video");
+    const defaultIdx = pickDefaultVideoIndex(data.video_formats);
+    selectFormat(dlVideoFormatList.children[defaultIdx], data.video_formats[defaultIdx], "video");
   }
 
-  dlAudioFormatListV.innerHTML = "";
   dlAudioFormatListA.innerHTML = "";
   if (data.audio_formats.length === 0) {
-    dlAudioFormatListV.innerHTML = noFmt;
     dlAudioFormatListA.innerHTML = noFmt;
   } else {
-    data.audio_formats.forEach((fmt, i) => {
-      dlAudioFormatListV.appendChild(createFormatItem(fmt, "audio", i));
-      dlAudioFormatListA.appendChild(createFormatItem(fmt, "audio", i));
-    });
-    selectFormat(dlAudioFormatListV.children[0], data.audio_formats[0], "audio");
+    data.audio_formats.forEach((fmt, i) =>
+      dlAudioFormatListA.appendChild(createFormatItem(fmt, "audio", i)));
   }
 }
 
@@ -870,8 +1087,24 @@ function createFormatItem(format, type, index) {
     </div>
     ${format.note ? `<span class="format-note">${escHtml(format.note)}</span>` : ""}
   `;
-  div.addEventListener("click", () => selectFormat(div, format, type));
+  div.addEventListener("click", () => toggleFormat(div, format, type));
   return div;
+}
+
+// Clicking a format selects it; clicking the already-selected one deselects it
+// (so a video and/or audio quality can each be picked independently — see startDownload()).
+function toggleFormat(element, format, type) {
+  const isSame = type === "video"
+    ? selectedVideoFormat === format.id
+    : selectedAudioFormat === format.id;
+
+  if (isSame) {
+    element.classList.remove("selected");
+    if (type === "video") selectedVideoFormat = null;
+    else                  selectedAudioFormat = null;
+  } else {
+    selectFormat(element, format, type);
+  }
 }
 
 function selectFormat(element, format, type) {
@@ -880,12 +1113,8 @@ function selectFormat(element, format, type) {
     element.classList.add("selected");
     selectedVideoFormat = format.id;
   } else {
-    const fid = String(format.id);
-    [dlAudioFormatListV, dlAudioFormatListA].forEach(list => {
-      list.querySelectorAll(".format-item").forEach(el => {
-        el.classList.toggle("selected", el.dataset.formatId === fid);
-      });
-    });
+    dlAudioFormatListA.querySelectorAll(".format-item").forEach(el => el.classList.remove("selected"));
+    element.classList.add("selected");
     selectedAudioFormat = format.id;
   }
 }
@@ -956,10 +1185,20 @@ function deselectAllVideos() {
 // Start YouTube download
 // ══════════════════════════════════════════════════
 async function startDownload() {
-  const downloadType = dlTabMode;
+  if (!selectedVideoFormat && !selectedAudioFormat) {
+    showError("Please select a video and/or audio quality");
+    return;
+  }
 
-  if (!selectedAudioFormat) { showError("Please select an audio quality"); return; }
-  if (downloadType === "video" && !selectedVideoFormat) { showError("Please select a video quality"); return; }
+  // Video + Audio always travel together as one merged file; a standalone Audio
+  // file is a separate, independent job. Either or both can be requested at once.
+  const jobs = [];
+  if (selectedVideoFormat) {
+    jobs.push({ download_type: "video", video_format_id: selectedVideoFormat, audio_format_id: "bestaudio" });
+  }
+  if (selectedAudioFormat) {
+    jobs.push({ download_type: "audio", video_format_id: null, audio_format_id: selectedAudioFormat });
+  }
 
   const action = await checkDuplicate(fetchedUrl);
   if (action === "abort") return;
@@ -967,25 +1206,29 @@ async function startDownload() {
 
   setLoading(dlConfirmBtn, true);
   try {
-    const res  = await fetch("/api/download", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url:             fetchedUrl,
-        download_type:   downloadType,
-        video_format_id: selectedVideoFormat,
-        audio_format_id: selectedAudioFormat,
-        is_playlist:     currentData.is_playlist,
-        skip_indices:    Array.from(skippedIndices),
-        rename_mode,
-      }),
-    });
-    const data = await safeJson(res);
-    if (!res.ok) throw new Error(data.error || "Failed to start download");
+    for (const job of jobs) {
+      const res  = await fetch("/api/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url:             fetchedUrl,
+          download_type:   job.download_type,
+          video_format_id: job.video_format_id,
+          audio_format_id: job.audio_format_id,
+          is_playlist:     currentData.is_playlist,
+          skip_indices:    Array.from(skippedIndices),
+          rename_mode,
+        }),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error(data.error || "Failed to start download");
+    }
     closeDownloadModal();
     globalUrlInput.value = "";
     delete urlCache[fetchedUrl];
-    showSuccess("Download started! Track progress in the queue below.");
+    showSuccess(jobs.length > 1
+      ? "Downloads started! Track progress in the queue below."
+      : "Download started! Track progress in the queue below.");
     startQueuePolling();
   } catch (error) { showError(error.message); }
   finally { setLoading(dlConfirmBtn, false); }
@@ -997,7 +1240,7 @@ async function startDownload() {
 const swalDark = Swal.mixin({
   background: "#1a1c23",
   color: "#f5ebe0",
-  confirmButtonColor: "#D4AF37",
+  confirmButtonColor: "#C9A227",
   cancelButtonColor: "rgba(255,255,255,0.12)",
   customClass: { popup: "swal-afriway" }
 });
@@ -1099,8 +1342,30 @@ document.addEventListener('click', () => {
 // ══════════════════════════════════════════════════
 // URL Input Right-Click Context Menu
 // ══════════════════════════════════════════════════
+// The desktop app's webview (pywebview/WebView2) has no permission-prompt UI,
+// so navigator.clipboard.readText()/writeText() are silently denied there.
+// Route through the OS clipboard via the backend instead — see /api/clipboard.
+async function readClipboardText() {
+  try {
+    const res  = await fetch('/api/clipboard');
+    const data = await res.json();
+    return data.text || '';
+  } catch (_) { return ''; }
+}
+
+async function writeClipboardText(text) {
+  try {
+    await fetch('/api/clipboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+  } catch (_) {}
+}
+
 (function () {
   const urlInput = document.getElementById('globalUrlInput');
+  const wrap     = document.querySelector('.url-input-wrap');
   const menu     = document.getElementById('urlContextMenu');
   const btnCut   = document.getElementById('ctxCut');
   const btnCopy  = document.getElementById('ctxCopy');
@@ -1121,46 +1386,51 @@ document.addEventListener('click', () => {
     menu.style.top  = Math.min(y, vh - mh - 6) + 'px';
   }
 
-  urlInput.addEventListener('contextmenu', function (e) {
+  // Listen on the whole input wrapper (covers right-clicking the paste button too),
+  // not just the bare <input>.
+  (wrap || urlInput).addEventListener('contextmenu', function (e) {
     e.preventDefault();
+    urlInput.focus();
     const hasSel = urlInput.selectionStart !== urlInput.selectionEnd;
     btnCut.dataset.disabled  = hasSel ? 'false' : 'true';
     btnCopy.dataset.disabled = hasSel ? 'false' : 'true';
     showMenu(e.clientX, e.clientY);
   });
 
-  btnCut.addEventListener('click', function () {
-    urlInput.focus();
-    document.execCommand('cut');
-    hideMenu();
-  });
-
-  btnCopy.addEventListener('click', function () {
+  btnCut.addEventListener('click', async function () {
     const start = urlInput.selectionStart;
     const end   = urlInput.selectionEnd;
     if (start !== end) {
-      navigator.clipboard.writeText(urlInput.value.slice(start, end)).catch(() => {
-        urlInput.focus();
-        document.execCommand('copy');
-      });
+      await writeClipboardText(urlInput.value.slice(start, end));
+      urlInput.value = urlInput.value.slice(0, start) + urlInput.value.slice(end);
+      urlInput.focus();
+      urlInput.setSelectionRange(start, start);
+      urlInput.dispatchEvent(new Event('input'));
     }
     hideMenu();
   });
 
-  btnPaste.addEventListener('click', function () {
-    navigator.clipboard.readText().then(function (text) {
-      urlInput.focus();
+  btnCopy.addEventListener('click', async function () {
+    const start = urlInput.selectionStart;
+    const end   = urlInput.selectionEnd;
+    if (start !== end) {
+      await writeClipboardText(urlInput.value.slice(start, end));
+    }
+    hideMenu();
+  });
+
+  btnPaste.addEventListener('click', async function () {
+    const text = await readClipboardText();
+    if (text) {
       const start = urlInput.selectionStart;
       const end   = urlInput.selectionEnd;
       const val   = urlInput.value;
       urlInput.value = val.slice(0, start) + text + val.slice(end);
       const cursor = start + text.length;
+      urlInput.focus();
       urlInput.setSelectionRange(cursor, cursor);
       urlInput.dispatchEvent(new Event('input'));
-    }).catch(() => {
-      urlInput.focus();
-      document.execCommand('paste');
-    });
+    }
     hideMenu();
   });
 
@@ -1178,17 +1448,297 @@ document.addEventListener('click', () => {
   const urlInput = document.getElementById('globalUrlInput');
   if (!btn || !urlInput) return;
 
-  btn.addEventListener('click', function () {
-    navigator.clipboard.readText().then(function (text) {
-      urlInput.value = text.trim();
+  btn.addEventListener('click', async function () {
+    const text = (await readClipboardText()).trim();
+    if (text) {
+      urlInput.value = text;
       urlInput.focus();
       urlInput.dispatchEvent(new Event('input'));
-    }).catch(() => {
-      urlInput.focus();
-      document.execCommand('paste');
-    });
+    }
   });
 })();
+
+// ── Inline copy button inside URL input ──
+(function () {
+  const btn      = document.getElementById('urlCopyBtn');
+  const urlInput = document.getElementById('globalUrlInput');
+  if (!btn || !urlInput) return;
+
+  btn.addEventListener('click', async function () {
+    if (!urlInput.value) return;
+    await writeClipboardText(urlInput.value);
+    swalToast.fire({ icon: 'success', title: 'Copied!' });
+  });
+})();
+
+// ══════════════════════════════════════════════════
+// Speed Test
+// ══════════════════════════════════════════════════
+const CF_TRACE = 'https://speed.cloudflare.com/cdn-cgi/trace';
+const CF_DOWN  = 'https://speed.cloudflare.com/__down?bytes=26214400'; // 25 MB
+const CF_UP    = 'https://speed.cloudflare.com/__up';
+const SPEED_GAUGE_MAX  = 300;   // Mbps that fills the gauge to 100%
+const SPEED_GAUGE_CIRC = 596.9; // 2 * PI * 95 — matches the SVG ring radius
+
+let speedAbort = null;
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function openSpeedTest() {
+  document.getElementById("speedTestModal").classList.remove("hidden");
+  resetSpeedTest();
+}
+
+function closeSpeedTest() {
+  document.getElementById("speedTestModal").classList.add("hidden");
+  if (speedAbort) speedAbort.abort();
+}
+
+function cancelSpeedTest() {
+  if (speedAbort) speedAbort.abort();
+  closeSpeedTest();
+}
+
+function resetSpeedTest() {
+  showSpeedPhase("Idle");
+  const isp = document.getElementById("speedIsp");
+  isp.classList.add("hidden");
+  isp.textContent = "";
+  setGaugeValue(0);
+}
+
+function showSpeedPhase(suffix) {
+  ["Idle", "Running", "Error", "Done"].forEach(s => {
+    document.getElementById("speed" + s).classList.toggle("hidden", s !== suffix);
+  });
+}
+
+function setGaugeValue(mbps) {
+  const arc   = document.getElementById("speedGaugeArc");
+  const value = document.getElementById("speedGaugeValue");
+  const pct   = Math.min(Math.max(mbps, 0) / SPEED_GAUGE_MAX, 1);
+  arc.style.strokeDashoffset = SPEED_GAUGE_CIRC * (1 - pct);
+  value.textContent = mbps >= 10 ? mbps.toFixed(1) : mbps > 0 ? mbps.toFixed(2) : "0.0";
+}
+
+// ── Ping + ISP (Cloudflare trace) ──
+async function measureSpeedPing(signal) {
+  const rtts = [];
+  let isp = "";
+  for (let i = 0; i < 5; i++) {
+    if (signal.aborted) break;
+    try {
+      const t0   = Date.now();
+      const resp = await fetch(CF_TRACE, { cache: "no-store", signal });
+      rtts.push(Date.now() - t0);
+      if (i === 0) {
+        const text = await resp.text();
+        const ispM = text.match(/^org=(.+)$/m);
+        if (ispM) isp = ispM[1].replace(/^AS\d+\s*/, "");
+      }
+    } catch (_) { /* ignore individual failures */ }
+    if (i < 4) await sleep(100);
+  }
+  if (rtts.length === 0) return { ping: 0, jitter: 0, isp: "" };
+  const avg    = rtts.reduce((a, b) => a + b, 0) / rtts.length;
+  const jitter = rtts.length > 1
+    ? rtts.slice(1).reduce((s, r, i) => s + Math.abs(r - rtts[i]), 0) / (rtts.length - 1)
+    : 0;
+  return { ping: Math.round(avg), jitter: Math.round(jitter), isp };
+}
+
+// ── Download speed ──
+function measureSpeedDownload(onProgress, signal) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const t0  = Date.now();
+    let lastLoaded = 0, lastTime = t0;
+    const readings = [];
+
+    xhr.open("GET", CF_DOWN, true);
+    xhr.onprogress = (e) => {
+      const now     = Date.now();
+      const elapsed = (now - lastTime) / 1000;
+      if (elapsed >= 0.25 && e.loaded > lastLoaded) {
+        const mbps = ((e.loaded - lastLoaded) * 8) / (1024 * 1024 * elapsed);
+        if (mbps > 0) {
+          readings.push(mbps);
+          const pct = e.lengthComputable && e.total > 0 ? e.loaded / e.total : 0;
+          onProgress(mbps, pct);
+        }
+        lastLoaded = e.loaded;
+        lastTime   = now;
+      }
+    };
+    xhr.onload = () => {
+      if (readings.length === 0) {
+        const elapsed = (Date.now() - t0) / 1000;
+        resolve(Math.round((26 * 8) / elapsed * 10) / 10);
+        return;
+      }
+      const sorted = [...readings].sort((a, b) => b - a);
+      const top    = sorted.slice(0, Math.ceil(sorted.length / 2));
+      resolve(Math.round((top.reduce((a, b) => a + b) / top.length) * 10) / 10);
+    };
+    xhr.onerror   = () => reject(new Error("No internet connection. Check your network."));
+    xhr.ontimeout = () => reject(new Error("Connection timed out."));
+    xhr.timeout   = 35000;
+    signal.addEventListener("abort", () => { xhr.abort(); reject(new Error("Aborted")); });
+    xhr.send();
+  });
+}
+
+// ── Upload speed ──
+function measureSpeedUpload(onProgress, signal) {
+  return new Promise((resolve, reject) => {
+    // 8 MB — big enough that the phase is visible and past TCP slow-start on
+    // typical connections (2 MB finishes almost instantly and barely shows).
+    const SIZE = 8 * 1024 * 1024;
+    const body = "0".repeat(SIZE);
+    const xhr  = new XMLHttpRequest();
+    const t0   = Date.now();
+    let lastLoaded = 0, lastTime = t0;
+    const readings = [];
+
+    xhr.open("POST", CF_UP, true);
+    xhr.setRequestHeader("Content-Type", "text/plain");
+    xhr.upload.onprogress = (e) => {
+      const now     = Date.now();
+      const elapsed = (now - lastTime) / 1000;
+      if (elapsed >= 0.2 && e.loaded > lastLoaded) {
+        const mbps = ((e.loaded - lastLoaded) * 8) / (1024 * 1024 * elapsed);
+        if (mbps > 0) {
+          readings.push(mbps);
+          const pct = e.lengthComputable && e.total > 0 ? e.loaded / e.total : 0;
+          onProgress(mbps, pct);
+        }
+        lastLoaded = e.loaded;
+        lastTime   = now;
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Upload test failed (HTTP ${xhr.status}).`));
+        return;
+      }
+      if (readings.length === 0) {
+        const elapsed = (Date.now() - t0) / 1000;
+        resolve(Math.round((SIZE * 8) / (1024 * 1024 * elapsed) * 10) / 10);
+        return;
+      }
+      const sorted = [...readings].sort((a, b) => b - a);
+      const top    = sorted.slice(0, Math.ceil(sorted.length / 2));
+      resolve(Math.round((top.reduce((a, b) => a + b) / top.length) * 10) / 10);
+    };
+    xhr.onerror   = () => reject(new Error("Upload test failed. Check your network."));
+    xhr.ontimeout = () => reject(new Error("Upload timed out."));
+    xhr.timeout   = 30000;
+    signal.addEventListener("abort", () => { xhr.abort(); reject(new Error("Aborted")); });
+    xhr.send(body);
+  });
+}
+
+function getSpeedRating(mbps) {
+  if (mbps >= 200) return { label: "Blazing Fast", color: "#27ae60", emoji: "🚀", sub: "Perfect for 4K streaming & large downloads" };
+  if (mbps >= 100) return { label: "Excellent",     color: "#2ecc71", emoji: "⚡", sub: "Perfect for 4K streaming & large downloads" };
+  if (mbps >= 25)  return { label: "Good",          color: "#f1c40f", emoji: "✅", sub: "Great for HD video & fast downloads" };
+  if (mbps >= 5)   return { label: "Fair",          color: "#f39c12", emoji: "👍", sub: "OK for streaming, may buffer on HD" };
+  if (mbps > 0)    return { label: "Poor",          color: "#e74c3c", emoji: "⚠️", sub: "Basic browsing and SD streaming only" };
+  return              { label: "—",              color: "#888",    emoji: "❓", sub: "Unable to measure download speed" };
+}
+
+async function startSpeedTest() {
+  if (speedAbort) speedAbort.abort();
+  const abort = new AbortController();
+  speedAbort  = abort;
+
+  showSpeedPhase("Running");
+  setGaugeValue(0);
+  document.getElementById("speedProgressTrack").classList.add("hidden");
+  document.getElementById("speedProgressFill").style.width = "0%";
+  document.getElementById("speedPhaseLabel").textContent = "Testing Latency…";
+  document.getElementById("speedIsp").classList.add("hidden");
+
+  try {
+    const p = await measureSpeedPing(abort.signal);
+    if (abort.signal.aborted) return;
+    if (p.isp) {
+      const isp = document.getElementById("speedIsp");
+      isp.textContent = "📡 " + p.isp;
+      isp.classList.remove("hidden");
+    }
+    document.getElementById("speedResultPing").textContent   = p.ping;
+    document.getElementById("speedResultJitter").textContent = p.jitter > 0 ? `±${p.jitter}ms` : "";
+
+    document.getElementById("speedPhaseLabel").textContent = "DOWNLOAD";
+    document.getElementById("speedProgressTrack").classList.remove("hidden");
+    setGaugeValue(0);
+    const dl = await measureSpeedDownload((mbps, pct) => {
+      setGaugeValue(Math.round(mbps * 10) / 10);
+      document.getElementById("speedProgressFill").style.width = Math.min(pct * 100, 100) + "%";
+    }, abort.signal);
+    if (abort.signal.aborted) return;
+    document.getElementById("speedResultDown").textContent = dl;
+
+    document.getElementById("speedPhaseLabel").textContent = "UPLOAD";
+    setGaugeValue(0);
+    document.getElementById("speedProgressFill").style.width = "0%";
+    let ul = 0;
+    let uploadFailed = false;
+    try {
+      ul = await measureSpeedUpload((mbps, pct) => {
+        setGaugeValue(Math.round(mbps * 10) / 10);
+        document.getElementById("speedProgressFill").style.width = Math.min(pct * 100, 100) + "%";
+      }, abort.signal);
+    } catch (e) {
+      // Upload failure is non-fatal — ping/download results still stand — but
+      // show it plainly instead of a silent, misleading "0".
+      uploadFailed = true;
+      console.warn("Upload speed test failed:", e);
+    }
+    if (abort.signal.aborted) return;
+    document.getElementById("speedResultUp").textContent = uploadFailed ? "—" : ul;
+
+    renderSpeedResults(dl);
+    showSpeedPhase("Done");
+  } catch (e) {
+    if (abort.signal.aborted) return;
+    document.getElementById("speedErrorMsg").textContent = e.message || "Speed test failed.";
+    showSpeedPhase("Error");
+  }
+}
+
+function renderSpeedResults(dlMbps) {
+  const rating = getSpeedRating(dlMbps);
+  document.getElementById("speedRating").innerHTML = `
+    <span class="speed-rating-emoji">${rating.emoji}</span>
+    <div>
+      <div class="speed-rating-label" style="color:${rating.color}">${rating.label}</div>
+      <div class="speed-rating-sub">${rating.sub}</div>
+    </div>
+  `;
+  renderSpeedNetworkUsage();
+}
+
+function renderSpeedNetworkUsage() {
+  const box    = document.getElementById("speedActiveDownloads");
+  const active = cachedDownloads.filter(d => d.status === "downloading");
+  const header = `<div style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;font-weight:700;margin-bottom:8px">NETWORK USAGE</div>`;
+  if (active.length === 0) {
+    box.innerHTML = header + `<div class="speed-usage-empty">No active downloads right now.</div>`;
+    return;
+  }
+  const rows = active.map(d => `
+    <div class="speed-usage-row">
+      <span class="speed-usage-name" title="${escHtml(d.name || d.url || "")}">${escHtml(d.name || d.url || "Unknown")}</span>
+      <span class="speed-usage-meta">${Math.round(d.progress || 0)}% · ${formatSpeed(d.speed) || "—"}</span>
+    </div>
+  `).join("");
+  box.innerHTML = header + rows;
+}
+
+document.getElementById("speedTestBtn").addEventListener("click", openSpeedTest);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeSpeedTest(); });
 
 // ══════════════════════════════════════════════════
 loadDrives();

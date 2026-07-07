@@ -17,10 +17,14 @@ InstallDir      "${INSTALL_DIR}"
 InstallDirRegKey HKLM "${REG_KEY}" "InstallLocation"
 RequestExecutionLevel admin
 SetCompressor   /SOLID lzma
+Icon            "static\afriway.ico"
+UninstallIcon   "static\afriway.ico"
 
 ;----- Pages ---------------------------------------------------------------
 !include "MUI2.nsh"
 
+!define MUI_ICON   "static\afriway.ico"
+!define MUI_UNICON "static\afriway.ico"
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY

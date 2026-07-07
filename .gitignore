@@ -14,8 +14,11 @@ static/qr-coffee*.webp
 downloads.json
 prefs.json
 youtube_cookies.txt
+window.json
 aria2c.exe
 static/aria2*/
+ffmpeg.exe
+static/ffmpeg-win64/
 *.torrent
 style.css.bak
 static/style-dark.css
@@ -24,6 +27,10 @@ static/style-light.css
 # Node / Electron
 node_modules/
 out/
+package-lock.json
+
+# Expo (accidental — not part of this project)
+.expo/
 
 # PyInstaller build output
 build/

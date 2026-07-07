@@ -35,6 +35,7 @@ a = Analysis(
             'requests',
             'clr_loader',
             'pythonnet',
+            'pystray',
         ]
     ),
     hookspath=[],

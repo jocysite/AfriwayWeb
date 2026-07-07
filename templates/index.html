@@ -9,7 +9,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='afriway.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32.png') }}">
     <link rel="icon" type="image/webp" href="{{ url_for('static', filename='AfriwayLogo.webp') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+    <meta name="theme-color" content="#111215">
 </head>
 <body>
 
@@ -41,6 +44,14 @@
                     <button id="savePartitionBtn" type="button" class="btn btn-primary btn-apply">Apply</button>
                 </div>
                 <span id="afriwayPathPreview" class="afriway-path-preview"></span>
+
+                <div class="storage-overview" id="storageOverview">
+                    <div class="storage-bar-track"><div id="storageBarFill" class="storage-bar-fill"></div></div>
+                    <div class="storage-bar-labels">
+                        <span id="storageUsedLabel">Checking free space…</span>
+                        <span id="storageFreeLabel"></span>
+                    </div>
+                </div>
             </div>
 
             <!-- YouTube Cookies -->
@@ -95,17 +106,32 @@
             <!-- Support / coffee -->
             <div class="modal-section">
                 <div class="support-panel">
-                    <p class="support-heading">☕ Support Afriway</p>
-                    <p class="support-tagline">If this app saves you time, buy me a coffee!</p>
-                    <div class="qr-wrapper">
-                        <img src="{{ url_for('static', filename='qr-coffee.webp') }}"
-                             alt="Buy Me a Coffee QR Code" class="qr-img"
-                             onerror="this.parentElement.style.display='none'">
+                    <div class="support-accent-bar"></div>
+
+                    <div class="support-hero">
+                        <div class="support-cup-badge">☕</div>
+                        <div class="support-hero-text">
+                            <p class="support-heading">Support Afriway</p>
+                            <p class="support-tagline">If this app saves you time, buy me a coffee!</p>
+                        </div>
                     </div>
+
+                    <div class="qr-frame">
+                        <div class="qr-wrapper">
+                            <img src="{{ url_for('static', filename='qr-coffee.webp') }}"
+                                 alt="Buy Me a Coffee QR Code" class="qr-img"
+                                 onerror="this.closest('.qr-frame').style.display='none'">
+                        </div>
+                        <span class="qr-scan">Scan to donate</span>
+                    </div>
+
                     <a href="https://buymeacoffee.com/yosefmulatu" target="_blank" rel="noopener noreferrer"
                        class="btn-coffee">☕ Buy Me a Coffee</a>
                     <span class="support-url">buymeacoffee.com/yosefmulatu</span>
-                    <span class="dev-credit">Developed by: Yosef Mulatu</span>
+                    <span class="dev-credit">✦ Developed by Yosef Mulatu</span>
+
+                    <div class="support-divider"></div>
+
                     <div class="social-links">
                         <a href="https://www.linkedin.com/in/yosefmulatu/" target="_blank" rel="noopener noreferrer"
                            class="social-link social-link--linkedin" title="LinkedIn">
@@ -131,6 +157,12 @@
                                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <rect x="2" y="4" width="20" height="16" rx="2"/>
                                 <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+                            </svg>
+                        </a>
+                        <a href="https://github.com/jocysite/AfriwayWeb" target="_blank" rel="noopener noreferrer"
+                           class="social-link social-link--github" title="GitHub">
+                            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
                             </svg>
                         </a>
                     </div>
@@ -179,8 +211,16 @@
 
         <div class="modal-body">
 
+            <!-- Save location — applies to every download, any type -->
+            <div class="dl-location-row">
+                <span class="dl-location-icon">📁</span>
+                <span class="dl-location-path" id="dlLocationPath" title="">Loading…</span>
+                <button type="button" class="btn-small" onclick="pickDownloadLocation()">Change</button>
+            </div>
+
             <!-- ── YouTube ── -->
             <div id="dlYoutubeContent" class="hidden">
+                <p class="url-hint dl-format-hint">Video downloads with audio automatically. Turn on Audio too for a separate standalone audio file — pick either, or both.</p>
                 <div class="dl-layout">
 
                     <!-- Left: type tabs -->
@@ -206,8 +246,6 @@
                         <div id="dlVideoPane" class="dl-pane">
                             <p class="quality-title">🎬 Video Quality</p>
                             <div id="dlVideoFormatList" class="format-list"></div>
-                            <p class="quality-title quality-title--gap">🎵 Audio Quality</p>
-                            <div id="dlAudioFormatListV" class="format-list"></div>
                         </div>
                         <div id="dlAudioPane" class="dl-pane hidden">
                             <p class="quality-title">🎵 Audio Quality</p>
@@ -255,6 +293,122 @@
     </div><!-- /.modal-panel -->
 </div><!-- /#downloadModal -->
 
+<!-- ══════════════════════════════════════════════════
+     PLAYLIST PROGRESS MODAL
+══════════════════════════════════════════════════ -->
+<div id="playlistProgressModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Playlist Download Progress">
+    <div class="modal-backdrop" onclick="closePlaylistProgress()"></div>
+    <div class="modal-panel pv-panel">
+
+        <div class="modal-header">
+            <div class="dl-title-wrap">
+                <h2 id="pvModalTitle" class="dl-title">Playlist Progress</h2>
+                <div id="pvModalMeta" class="dl-meta"></div>
+            </div>
+            <button type="button" class="modal-close" onclick="closePlaylistProgress()" title="Close">✕</button>
+        </div>
+
+        <div class="modal-body">
+            <div id="pvOverall" class="pv-overall"></div>
+            <div id="pvVideoList" class="pv-video-list"></div>
+        </div>
+
+    </div><!-- /.modal-panel -->
+</div><!-- /#playlistProgressModal -->
+
+<!-- ══════════════════════════════════════════════════
+     SPEED TEST MODAL
+══════════════════════════════════════════════════ -->
+<div id="speedTestModal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Speed Test">
+    <div class="modal-backdrop"></div>
+    <div class="modal-panel">
+
+        <div class="modal-header">
+            <h2>⚡ Speed Test</h2>
+            <button type="button" class="modal-close" onclick="closeSpeedTest()" title="Close">✕</button>
+        </div>
+
+        <div class="modal-body">
+            <p id="speedIsp" class="speed-isp hidden"></p>
+
+            <!-- Idle -->
+            <div id="speedIdle" class="speed-phase">
+                <button type="button" id="speedGoBtn" class="speed-go-btn" onclick="startSpeedTest()">
+                    <span class="speed-go-text">GO</span>
+                    <span class="speed-go-sub">Tap to start</span>
+                </button>
+                <p class="url-hint speed-idle-hint">Tests download, upload, and latency using Cloudflare's network.</p>
+            </div>
+
+            <!-- Running (ping / download / upload) -->
+            <div id="speedRunning" class="speed-phase hidden">
+                <div class="speed-gauge-wrap">
+                    <svg viewBox="0 0 220 220" class="speed-gauge-svg">
+                        <defs>
+                            <linearGradient id="goldGaugeGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#A67C1E"/>
+                                <stop offset="50%" stop-color="#C9A227"/>
+                                <stop offset="100%" stop-color="#F0D479"/>
+                            </linearGradient>
+                        </defs>
+                        <circle class="speed-gauge-track" cx="110" cy="110" r="95"></circle>
+                        <circle id="speedGaugeArc" class="speed-gauge-arc" cx="110" cy="110" r="95"></circle>
+                    </svg>
+                    <div class="speed-gauge-center">
+                        <div id="speedGaugeValue" class="speed-gauge-value">0.0</div>
+                        <div class="speed-gauge-unit">Mbps</div>
+                    </div>
+                    <span class="speed-sparkle speed-sparkle--1">✦</span>
+                    <span class="speed-sparkle speed-sparkle--2">✦</span>
+                    <span class="speed-sparkle speed-sparkle--3">✦</span>
+                    <span class="speed-sparkle speed-sparkle--4">✦</span>
+                </div>
+                <div id="speedPhaseLabel" class="speed-phase-label">Testing Latency…</div>
+                <div id="speedProgressTrack" class="speed-progress-track hidden">
+                    <div id="speedProgressFill" class="speed-progress-fill"></div>
+                </div>
+                <button type="button" class="btn-action btn-action--remove speed-cancel-btn" onclick="cancelSpeedTest()">✕ Cancel</button>
+            </div>
+
+            <!-- Error -->
+            <div id="speedError" class="speed-phase hidden">
+                <div class="speed-error-icon">📡</div>
+                <p id="speedErrorMsg" class="speed-error-msg"></p>
+                <button type="button" class="btn btn-primary speed-retry-btn" onclick="startSpeedTest()">Try Again</button>
+            </div>
+
+            <!-- Done -->
+            <div id="speedDone" class="speed-phase hidden">
+                <div class="speed-result-row">
+                    <div class="speed-result-chip">
+                        <div id="speedResultPing" class="speed-result-val">0</div>
+                        <div class="speed-result-unit">ms</div>
+                        <div class="speed-result-lbl">PING</div>
+                        <div id="speedResultJitter" class="speed-result-jitter"></div>
+                    </div>
+                    <div class="speed-result-chip speed-result-chip--main">
+                        <div id="speedResultDown" class="speed-result-val">0</div>
+                        <div class="speed-result-unit">Mbps</div>
+                        <div class="speed-result-lbl">↓ DOWNLOAD</div>
+                    </div>
+                    <div class="speed-result-chip">
+                        <div id="speedResultUp" class="speed-result-val">0</div>
+                        <div class="speed-result-unit">Mbps</div>
+                        <div class="speed-result-lbl">↑ UPLOAD</div>
+                    </div>
+                </div>
+
+                <div id="speedRating" class="speed-rating"></div>
+
+                <div id="speedActiveDownloads" class="speed-network-usage"></div>
+
+                <button type="button" class="btn btn-secondary speed-again-btn" onclick="startSpeedTest()">↺ Test Again</button>
+            </div>
+        </div>
+
+    </div><!-- /.modal-panel -->
+</div><!-- /#speedTestModal -->
+
 
 <!-- ══════════════════════════════════════════════════
      APP SHELL
@@ -301,6 +455,15 @@
                 </div>
             </div>
 
+            <!-- Speed Test -->
+            <button type="button" class="icon-btn" id="speedTestBtn" title="Speed Test">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m12 14 4-4"></path>
+                    <path d="M3.34 19a10 10 0 1 1 17.32 0"></path>
+                </svg>
+            </button>
+
             <!-- Settings -->
             <button type="button" class="icon-btn" id="settingsBtn" title="Settings &amp; About">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -341,6 +504,12 @@
                     <input type="text" id="globalUrlInput"
                         placeholder="Paste YouTube, magnet link, or direct file URL…"
                         class="url-input">
+                    <button type="button" id="urlCopyBtn" class="url-paste-btn" title="Copy">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                    </button>
                     <button type="button" id="urlPasteBtn" class="url-paste-btn" title="Paste from clipboard">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
@@ -391,6 +560,8 @@
                 </label>
                 <button type="button" class="btn-bulk btn-bulk--pause" onclick="pauseSelected('queue-all')">⏸ Pause</button>
                 <button type="button" class="btn-bulk btn-bulk--resume" onclick="resumeSelected('queue-all')">▶ Resume</button>
+                <button type="button" class="btn-bulk btn-bulk--clear" id="clearSelectedBtn" onclick="clearSelected('queue-all')" disabled>🗑 Clear</button>
+                <button type="button" class="btn-bulk btn-bulk--clear-all" id="clearAllBtn" onclick="clearAllDownloads()" disabled>🗑 Clear All</button>
             </div>
             <div class="download-queue" id="queue-all">
                 <div class="queue-empty">No downloads yet. Paste a URL above to get started.</div>

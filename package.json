@@ -30,7 +30,12 @@
       {
         "from": ".",
         "to": "app",
-        "filter": ["**/*", "!dist/**", "!node_modules/**", "!.git/**"]
+        "filter": [
+          "**/*",
+          "!dist/**",
+          "!node_modules/**",
+          "!.git/**"
+        ]
       }
     ],
     "win": {
@@ -45,7 +50,10 @@
       "createDesktopShortcut": true
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Utility"
     },
     "mac": {
@@ -53,7 +61,14 @@
       "category": "public.app-category.utilities"
     }
   },
-  "keywords": ["youtube", "downloader", "african", "ethiopian", "desktop", "electron"],
+  "keywords": [
+    "youtube",
+    "downloader",
+    "african",
+    "ethiopian",
+    "desktop",
+    "electron"
+  ],
   "license": "MIT",
   "devDependencies": {
     "electron": "^33.0.0",

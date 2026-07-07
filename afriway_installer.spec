@@ -28,6 +28,7 @@ a = Analysis(
             'requests',
             'clr_loader',
             'pythonnet',
+            'pystray',
         ]
     ),
     hookspath=[],
@@ -54,7 +55,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     console=False,
-    icon='static/facicon.ico',
+    icon='static/afriway.ico',
 )
 
 coll = COLLECT(

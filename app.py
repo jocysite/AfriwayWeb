@@ -1,6 +1,8 @@
 """
 Flask backend for YouTube Downloader
 """
+import concurrent.futures
+import ctypes
 import datetime
 import json
 import logging
@@ -74,6 +76,7 @@ if getattr(sys, 'frozen', False):
         pass
 
 import yt_dlp
+from yt_dlp.utils import sanitize_filename
 import qrcode
 from flask import Flask, render_template, request, jsonify
 
@@ -162,6 +165,87 @@ def _find_aria2c():
 _ARIA2C_PATH = _find_aria2c()
 ARIA2C_AVAILABLE = bool(_ARIA2C_PATH)
 
+
+def _find_ffmpeg():
+    """Return the full path to ffmpeg.exe, or None if not found. Mirrors _find_aria2c()."""
+    # 1. Already on PATH
+    on_path = shutil.which('ffmpeg')
+    if on_path:
+        return on_path
+
+    _appdata_ffmpeg = os.path.join(
+        os.environ.get('APPDATA', os.path.expanduser('~')),
+        'AfriWayDownloader', 'ffmpeg.exe')
+
+    # 2. Stable AppData copy (placed there on first run — avoids Windows blocking
+    #    executables in the volatile PyInstaller temp extraction dir)
+    if getattr(sys, 'frozen', False) and os.path.isfile(_appdata_ffmpeg):
+        return _appdata_ffmpeg
+
+    # 3. Resolve search directories
+    if getattr(sys, 'frozen', False):
+        dirs_to_search = list(dict.fromkeys([
+            sys._MEIPASS,                    # bundle extraction dir (contains static/)
+            os.path.dirname(sys.executable), # next to the .exe
+            os.getcwd(),
+        ]))
+    else:
+        try:
+            project_dir = os.path.dirname(os.path.abspath(__file__))
+        except Exception:
+            project_dir = os.getcwd()
+        dirs_to_search = list(dict.fromkeys([project_dir, os.getcwd()]))
+
+    found = None
+    for base in dirs_to_search:
+        static_dir = os.path.join(base, 'static')
+        if os.path.isdir(static_dir):
+            for entry in os.listdir(static_dir):
+                candidate = os.path.join(static_dir, entry, 'ffmpeg.exe')
+                if os.path.isfile(candidate):
+                    found = candidate
+                    break
+                candidate = os.path.join(static_dir, entry, 'bin', 'ffmpeg.exe')
+                if os.path.isfile(candidate):
+                    found = candidate
+                    break
+        if not found:
+            here = os.path.join(base, 'ffmpeg.exe')
+            if os.path.isfile(here):
+                found = here
+        if found:
+            break
+
+    # 4. If the found copy is inside PyInstaller's temp dir, copy it to AppData so
+    #    Windows is less likely to block it on subsequent runs
+    if found and getattr(sys, 'frozen', False) and sys._MEIPASS in found:
+        try:
+            os.makedirs(os.path.dirname(_appdata_ffmpeg), exist_ok=True)
+            shutil.copy2(found, _appdata_ffmpeg)
+            return _appdata_ffmpeg
+        except Exception:
+            pass  # fall through to use the original path
+
+    if found:
+        return found
+
+    # 5. Common Windows install locations
+    candidates = [
+        os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
+        r'C:\ffmpeg\bin\ffmpeg.exe',
+        r'C:\tools\ffmpeg\bin\ffmpeg.exe',
+        r'C:\ProgramData\chocolatey\bin\ffmpeg.exe',
+        r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+
+    return None
+
+_FFMPEG_PATH = _find_ffmpeg()
+FFMPEG_AVAILABLE = bool(_FFMPEG_PATH)
+
 _base_dir = sys._MEIPASS if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__,
             template_folder=os.path.join(_base_dir, 'templates'),
@@ -170,6 +254,18 @@ app = Flask(__name__,
 # Disable Flask request logging for cleaner console
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
+
+# Allow cross-origin requests so the Expo web build and mobile companion can connect
+@app.after_request
+def _add_cors(response):
+    response.headers['Access-Control-Allow-Origin']  = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+@app.route('/api/<path:path>', methods=['OPTIONS'])
+def _options_handler(path):
+    return '', 204
 
 # Wrap WSGI app to catch BaseException (e.g. SystemExit from yt_dlp sys.exit calls)
 # which bypass Flask's @app.errorhandler(Exception) and return HTML 500 pages.
@@ -208,6 +304,13 @@ _running_procs = {}  # session_id -> subprocess.Popen (aria2c handles)
 
 # Selected partition for Afriway folder (None = auto-detect system drive)
 _selected_partition = None
+
+# Selected full folder (chosen via native folder picker) — takes priority over
+# _selected_partition when set. None = fall back to the saved pref, then the partition.
+_selected_location = None
+
+# How many videos of a playlist download at once
+PLAYLIST_MAX_CONCURRENT = 4
 
 # Afriway folder structure — mirrors Xender-style auto-organised downloads
 AFRIWAY_SUBFOLDERS = ['Images', 'App', 'Folder', 'Videos', 'Other']
@@ -268,8 +371,97 @@ def _get_available_drives():
     return ['/']
 
 
+# ── Native clipboard bridge ──────────────────────────────────────────────────
+# The app's window is a pywebview/WebView2 view, where the browser Clipboard
+# API (navigator.clipboard) is frequently denied (no permission-prompt UI is
+# shown, so reads/writes just silently fail). Talking to the Win32 clipboard
+# directly via ctypes sidesteps that entirely.
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE = 0x0002
+
+if os.name == 'nt':
+    _user32 = ctypes.windll.user32
+    _kernel32 = ctypes.windll.kernel32
+    # Handles/pointers are 64-bit on Win64 — ctypes' default int guessing would
+    # truncate them, so these signatures must be declared explicitly.
+    _user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+    _user32.OpenClipboard.restype = ctypes.c_bool
+    _user32.CloseClipboard.restype = ctypes.c_bool
+    _user32.EmptyClipboard.restype = ctypes.c_bool
+    _user32.GetClipboardData.argtypes = [ctypes.c_uint]
+    _user32.GetClipboardData.restype = ctypes.c_void_p
+    _user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    _user32.SetClipboardData.restype = ctypes.c_void_p
+    _kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    _kernel32.GlobalLock.restype = ctypes.c_void_p
+    _kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    _kernel32.GlobalUnlock.restype = ctypes.c_bool
+    _kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+    _kernel32.GlobalAlloc.restype = ctypes.c_void_p
+
+
+def _win_open_clipboard(attempts=5, delay=0.02):
+    """OpenClipboard can transiently fail if another process (e.g. a clipboard
+    manager reacting to the update) briefly holds it — retry a few times."""
+    import time
+    for i in range(attempts):
+        if _user32.OpenClipboard(None):
+            return True
+        if i < attempts - 1:
+            time.sleep(delay)
+    return False
+
+
+def _win_clipboard_get_text():
+    if os.name != 'nt':
+        return ''
+    if not _win_open_clipboard():
+        return ''
+    try:
+        handle = _user32.GetClipboardData(_CF_UNICODETEXT)
+        if not handle:
+            return ''
+        locked = _kernel32.GlobalLock(handle)
+        if not locked:
+            return ''
+        try:
+            return ctypes.wstring_at(locked)
+        finally:
+            _kernel32.GlobalUnlock(handle)
+    finally:
+        _user32.CloseClipboard()
+
+
+def _win_clipboard_set_text(text):
+    if os.name != 'nt':
+        return False
+    data = (text or '').encode('utf-16-le') + b'\x00\x00'
+    if not _win_open_clipboard():
+        return False
+    try:
+        _user32.EmptyClipboard()
+        h_mem = _kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
+        if not h_mem:
+            return False
+        locked = _kernel32.GlobalLock(h_mem)
+        if not locked:
+            return False
+        try:
+            ctypes.memmove(locked, data, len(data))
+        finally:
+            _kernel32.GlobalUnlock(h_mem)
+        return bool(_user32.SetClipboardData(_CF_UNICODETEXT, h_mem))
+    finally:
+        _user32.CloseClipboard()
+
+
 def _get_afriway_base():
-    """Return the Afriway root folder path for the selected partition."""
+    """Return the Afriway root folder path — a custom picked folder takes
+    priority over the drive/partition selector."""
+    location = _selected_location or _load_prefs().get('location')
+    if location and os.path.isdir(location):
+        return os.path.join(location, 'Afriway')
+
     partition = _selected_partition
     if not partition:
         if os.name == 'nt':
@@ -318,6 +510,18 @@ def _save_prefs(data):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         existing = _load_prefs()
         existing.update(data)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(existing, f)
+    except Exception:
+        pass
+
+
+def _clear_pref(key):
+    try:
+        path = _get_prefs_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        existing = _load_prefs()
+        existing.pop(key, None)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(existing, f)
     except Exception:
@@ -405,6 +609,18 @@ def api_save_prefs():
     return jsonify({'ok': True})
 
 
+@app.route('/api/clipboard', methods=['GET'])
+def api_clipboard_get():
+    return jsonify({'text': _win_clipboard_get_text()})
+
+
+@app.route('/api/clipboard', methods=['POST'])
+def api_clipboard_set():
+    data = request.get_json(silent=True) or {}
+    ok = _win_clipboard_set_text(data.get('text', ''))
+    return jsonify({'success': ok})
+
+
 def _get_cookies_file():
     if getattr(sys, 'frozen', False):
         data_dir = os.path.join(
@@ -453,6 +669,14 @@ def _yt_cookie_opts():
     path = _get_cookies_file()
     if os.path.isfile(path):
         return {'cookiefile': path}
+    return {}
+
+
+def _ffmpeg_opts():
+    """Point yt-dlp at the bundled/detected ffmpeg so merging and audio
+    extraction work even when ffmpeg isn't installed system-wide."""
+    if _FFMPEG_PATH:
+        return {'ffmpeg_location': os.path.dirname(_FFMPEG_PATH)}
     return {}
 
 
@@ -632,6 +856,108 @@ def fetch_formats():
         return jsonify({'error': f'{type(e).__name__}: {str(e)}'}), 500
 
 
+@app.route('/api/mobile-info', methods=['POST'])
+def mobile_info():
+    """Return fully resolved stream URLs for the mobile app (yt-dlp backed, no restrictions)."""
+    try:
+        data = request.json
+        url = data.get('url')
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+
+        print(f"\n📱 Mobile info: {url}")
+
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'socket_timeout': 30,
+            'logger': _YtdlpLogger(),
+            **_yt_cookie_opts(),
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        if not info:
+            return jsonify({'error': 'Could not fetch video info'}), 500
+
+        # Best thumbnail
+        thumbs = [t for t in (info.get('thumbnails') or []) if t.get('url')]
+        thumbs.sort(key=lambda t: (t.get('width') or 0), reverse=True)
+        thumbnail = thumbs[0]['url'] if thumbs else ''
+
+        combined, video_formats, audio_formats = [], [], []
+
+        for idx, f in enumerate(info.get('formats') or []):
+            stream_url = f.get('url', '')
+            if not stream_url:
+                continue
+
+            vcodec = (f.get('vcodec') or 'none')
+            acodec = (f.get('acodec') or 'none')
+            has_video = vcodec != 'none'
+            has_audio = acodec != 'none'
+            if not has_video and not has_audio:
+                continue
+
+            fid = str(f.get('format_id', ''))
+            try:
+                itag = int(fid)
+            except (ValueError, TypeError):
+                itag = 100000 + idx
+
+            ext = f.get('ext') or 'mp4'
+            mime_type = f'video/{ext}' if has_video else f'audio/{ext}'
+            tbr = f.get('tbr') or 0
+
+            fmt = {
+                'itag': itag,
+                'mimeType': mime_type,
+                'quality': f.get('format_note') or '',
+                'qualityLabel': f.get('format_note') or f.get('resolution') or '',
+                'bitrate': int(tbr * 1000),
+                'contentLength': f.get('filesize') or f.get('filesize_approx') or 0,
+                'url': stream_url,
+                'width': f.get('width'),
+                'height': f.get('height'),
+                'fps': f.get('fps'),
+                'audioQuality': f.get('audio_ext') or None,
+                'audioChannels': f.get('audio_channels') or None,
+                'isAdaptive': has_video != has_audio,
+                'isVideoOnly': has_video and not has_audio,
+                'isAudioOnly': has_audio and not has_video,
+            }
+
+            if has_video and has_audio:
+                combined.append(fmt)
+            elif has_video:
+                video_formats.append(fmt)
+            else:
+                audio_formats.append(fmt)
+
+        combined.sort(key=lambda x: x.get('height') or 0, reverse=True)
+        video_formats.sort(key=lambda x: x.get('height') or 0, reverse=True)
+        audio_formats.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
+
+        print(f"✅ {info.get('title', '?')} — {len(combined)} combined, "
+              f"{len(audio_formats)} audio, {len(video_formats)} video-only")
+
+        return jsonify({
+            'videoId': info.get('id', ''),
+            'title': info.get('title', 'Unknown'),
+            'author': info.get('uploader', '') or '',
+            'thumbnail': thumbnail,
+            'durationSeconds': info.get('duration', 0) or 0,
+            'combinedFormats': combined,
+            'videoFormats': video_formats,
+            'audioFormats': audio_formats,
+        })
+
+    except BaseException as e:
+        tb = traceback.format_exc()
+        _log(f"❌ mobile-info error: {type(e).__name__}: {str(e)}\n{tb}")
+        return jsonify({'error': f'{type(e).__name__}: {str(e)}'}), 500
+
+
 @app.route('/api/download', methods=['POST'])
 def download():
     """Start download process"""
@@ -645,13 +971,15 @@ def download():
         skip_indices = data.get('skip_indices', [])
         rename_mode = data.get('rename_mode', False)  # True = add unique suffix instead of overwriting
 
-        if not url or not audio_format_id:
+        if not url or (not audio_format_id and not video_format_id):
             return jsonify({'error': 'Missing required parameters'}), 400
 
         session_id = str(uuid.uuid4())
         download_sessions[session_id] = {
             'status': 'downloading',
             'progress': 0,
+            'speed': 0,
+            'eta': 0,
             'message': 'Starting download...',
             'type': 'youtube',
             'name': url,
@@ -704,6 +1032,11 @@ def download_status(session_id):
 
 def _download_thread(session_id, url, download_type, video_format_id, audio_format_id, is_playlist, skip_indices, save_dir=None, rename_mode=False):
     """Background thread for downloading with smart quality fallback"""
+    if is_playlist:
+        _download_playlist_parallel(session_id, url, download_type, video_format_id,
+                                     audio_format_id, skip_indices, save_dir, rename_mode)
+        return
+
     evt = threading.Event()
     evt.set()
     _pause_events[session_id] = evt
@@ -733,6 +1066,10 @@ def _download_thread(session_id, url, download_type, video_format_id, audio_form
             short_id = session_id[:8]
             if output_template.endswith('.%(ext)s'):
                 output_template = output_template[:-len('.%(ext)s')] + f' ({short_id}).%(ext)s'
+
+        # Expose the destination folder immediately so "Show in folder" works while downloading
+        download_sessions[session_id]['save_dir'] = dest_folder
+        _save_sessions()
 
         last_video_percent = -1
         last_audio_percent = -1
@@ -792,7 +1129,11 @@ def _download_thread(session_id, url, download_type, video_format_id, audio_form
                             print(f"\r🎵 Audio: {percent:.1f}% ", end='', flush=True)
 
                     # Update session
+                    speed = d.get('speed') or 0
+                    eta = d.get('eta') or 0
                     download_sessions[session_id]['progress'] = percent
+                    download_sessions[session_id]['speed'] = round(speed)
+                    download_sessions[session_id]['eta'] = eta
                     download_sessions[session_id]['message'] = f"Downloading... {percent:.1f}%"
 
                 except (ValueError, KeyError):
@@ -845,7 +1186,6 @@ def _download_thread(session_id, url, download_type, video_format_id, audio_form
                 'format': format_string,
                 'merge_output_format': 'mp4',
                 'outtmpl': output_template,
-                'ignoreerrors': True,
                 'progress_hooks': [progress_hook],
                 'postprocessor_hooks': [postprocessor_hook],
                 'match_filter': match_filter,
@@ -855,6 +1195,7 @@ def _download_thread(session_id, url, download_type, video_format_id, audio_form
                 'no_warnings': True,
                 'logger': _YtdlpLogger(),
                 **_yt_cookie_opts(),
+                **_ffmpeg_opts(),
             }
         else:  # audio only
             format_string = (
@@ -875,7 +1216,6 @@ def _download_thread(session_id, url, download_type, video_format_id, audio_form
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }],
-                'ignoreerrors': True,
                 'progress_hooks': [progress_hook],
                 'postprocessor_hooks': [postprocessor_hook],
                 'match_filter': match_filter,
@@ -885,6 +1225,7 @@ def _download_thread(session_id, url, download_type, video_format_id, audio_form
                 'no_warnings': True,
                 'logger': _YtdlpLogger(),
                 **_yt_cookie_opts(),
+                **_ffmpeg_opts(),
             }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -925,6 +1266,236 @@ def _download_thread(session_id, url, download_type, video_format_id, audio_form
         _pause_events.pop(session_id, None)
 
 
+def _download_playlist_parallel(session_id, url, download_type, video_format_id, audio_format_id, skip_indices, save_dir=None, rename_mode=False):
+    """Download every (non-skipped) video of a playlist concurrently, tracking
+    per-video progress on the session so the UI can show each video's percent
+    plus an aggregate (average) percent and combined speed for the whole playlist."""
+    evt = threading.Event()
+    evt.set()
+    _pause_events[session_id] = evt
+    agg_lock = threading.Lock()
+
+    def recompute_aggregate():
+        with agg_lock:
+            s = download_sessions.get(session_id)
+            if not s:
+                return
+            vids = [v for v in s.get('videos', []) if v['status'] != 'skipped']
+            if not vids:
+                return
+            s['progress'] = sum(v['progress'] for v in vids) / len(vids)
+            s['speed'] = sum(v.get('speed', 0) for v in vids if v['status'] == 'downloading')
+            done = sum(1 for v in vids if v['status'] == 'completed')
+            s['message'] = f'{done}/{len(vids)} videos completed — {s["progress"]:.1f}% overall'
+
+    try:
+        if save_dir and os.path.isdir(save_dir):
+            playlist_root = save_dir
+        else:
+            afriway_base = _ensure_afriway_dirs()
+            playlist_root = os.path.join(afriway_base, 'Folder')
+
+        ydl_flat_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': 'in_playlist',
+            'socket_timeout': 30,
+            'logger': _YtdlpLogger(),
+            **_yt_cookie_opts(),
+        }
+        with yt_dlp.YoutubeDL(ydl_flat_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        playlist_title = info.get('title', 'Playlist')
+        safe_title = sanitize_filename(playlist_title, restricted=False)
+        dest_folder = os.path.join(playlist_root, safe_title)
+        os.makedirs(dest_folder, exist_ok=True)
+        entries = info.get('entries', []) or []
+
+        skip_set = set(skip_indices or [])
+        videos_meta = []
+        pending_indices = []
+        for idx, entry in enumerate(entries, start=1):
+            if not entry:
+                continue
+            vid_url = entry.get('url') or f"https://www.youtube.com/watch?v={entry.get('id', '')}"
+            title = entry.get('title', f'Video {idx}')
+            skipped = idx in skip_set
+            vmeta = {
+                'index': idx,
+                'title': title,
+                'url': vid_url,
+                'progress': 0,
+                'speed': 0,
+                'eta': 0,
+                'status': 'skipped' if skipped else 'pending',
+                'message': '',
+                'filepath': '',
+            }
+            videos_meta.append(vmeta)
+            if not skipped:
+                pending_indices.append(idx)
+
+        download_sessions[session_id]['is_playlist'] = True
+        download_sessions[session_id]['videos'] = videos_meta
+        download_sessions[session_id]['save_dir'] = dest_folder
+        download_sessions[session_id]['message'] = f'Downloading {len(pending_indices)} videos ({min(PLAYLIST_MAX_CONCURRENT, len(pending_indices) or 1)} at a time)...'
+        _save_sessions()
+
+        print(f"\n🚀 Starting parallel playlist download: {playlist_title} ({len(pending_indices)} videos, up to {PLAYLIST_MAX_CONCURRENT} at a time)\n")
+
+        if not pending_indices:
+            download_sessions[session_id]['status'] = 'completed'
+            download_sessions[session_id]['progress'] = 100
+            download_sessions[session_id]['message'] = 'No videos to download (all skipped)'
+            download_sessions[session_id]['save_dir'] = dest_folder
+            download_sessions[session_id]['filepath'] = dest_folder
+            _save_sessions()
+            return
+
+        by_index = {v['index']: v for v in videos_meta}
+
+        def download_one(idx):
+            vmeta = by_index[idx]
+            vmeta['status'] = 'downloading'
+
+            outtmpl = os.path.join(dest_folder, f'{idx} - %(title)s.%(ext)s')
+            if rename_mode:
+                short_id = session_id[:8]
+                outtmpl = outtmpl[:-len('.%(ext)s')] + f' ({short_id}).%(ext)s'
+
+            def progress_hook(d):
+                if not evt.is_set():
+                    raise Exception('paused')
+                if d['status'] == 'downloading':
+                    try:
+                        pct = float(d.get('_percent_str', '0%').strip().replace('%', ''))
+                    except ValueError:
+                        pct = 0
+                    vmeta['progress'] = pct
+                    vmeta['speed'] = round(d.get('speed') or 0)
+                    vmeta['eta'] = d.get('eta') or 0
+                    recompute_aggregate()
+                elif d['status'] == 'finished':
+                    vmeta['message'] = 'Processing and merging...'
+
+            captured_filepath = []
+
+            def postprocessor_hook(d):
+                if d.get('status') == 'finished':
+                    fp = d.get('filepath', '')
+                    if fp and not fp.endswith('.ytdl') and not fp.endswith('.part'):
+                        captured_filepath.append(fp)
+
+            if download_type == 'video':
+                format_string = (
+                    f'{video_format_id}+{audio_format_id}/'
+                    f'{video_format_id}+bestaudio/'
+                    f'bestvideo+{audio_format_id}/'
+                    f'bestvideo[height<=1080]+bestaudio[abr>=96]/'
+                    f'bestvideo+bestaudio/'
+                    f'best'
+                )
+                ydl_opts = {
+                    'format': format_string,
+                    'merge_output_format': 'mp4',
+                    'outtmpl': outtmpl,
+                    'noplaylist': True,
+                    'progress_hooks': [progress_hook],
+                    'postprocessor_hooks': [postprocessor_hook],
+                    'socket_timeout': 30,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'logger': _YtdlpLogger(),
+                    **_yt_cookie_opts(),
+                    **_ffmpeg_opts(),
+                }
+            else:  # audio only
+                format_string = (
+                    f'{audio_format_id}/'
+                    f'bestaudio[abr>=128]/'
+                    f'bestaudio/'
+                    f'best'
+                )
+                ydl_opts = {
+                    'format': format_string,
+                    'outtmpl': outtmpl,
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                    'noplaylist': True,
+                    'progress_hooks': [progress_hook],
+                    'postprocessor_hooks': [postprocessor_hook],
+                    'socket_timeout': 30,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'logger': _YtdlpLogger(),
+                    **_yt_cookie_opts(),
+                    **_ffmpeg_opts(),
+                }
+
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([vmeta['url']])
+                vmeta['status'] = 'completed'
+                vmeta['progress'] = 100
+                vmeta['speed'] = 0
+                if captured_filepath:
+                    vmeta['filepath'] = captured_filepath[-1]
+            except Exception as e:
+                if not evt.is_set():
+                    vmeta['status'] = 'paused'
+                else:
+                    vmeta['status'] = 'error'
+                    vmeta['message'] = str(e)
+                    _log(f"❌ Playlist video {idx} error: {e}")
+            finally:
+                recompute_aggregate()
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(PLAYLIST_MAX_CONCURRENT, len(pending_indices))) as pool:
+            list(pool.map(download_one, pending_indices))
+
+        _save_sessions()
+
+        if download_sessions.get(session_id, {}).get('status') == 'paused':
+            return  # paused externally mid-download; leave state as-is for resume
+
+        vids = [v for v in videos_meta if v['status'] != 'skipped']
+        errored   = [v for v in vids if v['status'] == 'error']
+        completed = [v for v in vids if v['status'] == 'completed']
+
+        download_sessions[session_id]['save_dir'] = dest_folder
+        download_sessions[session_id]['filepath'] = dest_folder
+
+        if errored and not completed:
+            download_sessions[session_id]['status'] = 'error'
+            download_sessions[session_id]['message'] = f'All {len(errored)} video(s) failed to download'
+        elif errored:
+            download_sessions[session_id]['status'] = 'completed'
+            download_sessions[session_id]['progress'] = 100
+            download_sessions[session_id]['message'] = f'Completed with {len(errored)} error(s) — {len(completed)}/{len(vids)} videos downloaded'
+        else:
+            download_sessions[session_id]['status'] = 'completed'
+            download_sessions[session_id]['progress'] = 100
+            download_sessions[session_id]['message'] = f'Playlist download completed! {len(completed)} video(s) saved'
+
+        print(f"\n✅ Playlist download finished: {len(completed)}/{len(vids)} succeeded")
+        print(f"📁 Saved to: {dest_folder}\n")
+        _save_sessions()
+
+    except BaseException as e:
+        tb = traceback.format_exc()
+        _log(f"❌ Playlist download error: {type(e).__name__}: {str(e)}\n{tb}")
+        if download_sessions.get(session_id, {}).get('status') != 'paused':
+            download_sessions[session_id]['status'] = 'error'
+            download_sessions[session_id]['message'] = f'{type(e).__name__}: {str(e)}'
+            _save_sessions()
+    finally:
+        _pause_events.pop(session_id, None)
+
+
 @app.route('/api/drives', methods=['GET'])
 def api_get_drives():
     """Return available drive letters with their Afriway paths."""
@@ -951,14 +1522,49 @@ def api_get_partition():
 
 @app.route('/api/set-partition', methods=['POST'])
 def api_set_partition():
-    global _selected_partition
+    global _selected_partition, _selected_location
     data = request.json
     partition = (data.get('partition') or '').strip()
     if not partition:
         return jsonify({'error': 'Partition required'}), 400
     _selected_partition = partition
+    # A drive choice supersedes any previously picked custom folder
+    _selected_location = None
+    _clear_pref('location')
     base = _ensure_afriway_dirs()
     return jsonify({'success': True, 'path': base})
+
+
+@app.route('/api/get-location', methods=['GET'])
+def api_get_location():
+    location = _selected_location or _load_prefs().get('location') or ''
+    return jsonify({'location': location, 'path': _get_afriway_base()})
+
+
+@app.route('/api/set-location', methods=['POST'])
+def api_set_location():
+    global _selected_location
+    data = request.json
+    location = (data.get('location') or '').strip()
+    if not location or not os.path.isdir(location):
+        return jsonify({'error': 'Folder not found'}), 400
+    _selected_location = location
+    _save_prefs({'location': location})
+    base = _ensure_afriway_dirs()
+    return jsonify({'success': True, 'path': base})
+
+
+@app.route('/api/disk-space', methods=['GET'])
+def api_disk_space():
+    """Free/used/total space for the drive that holds the current download destination."""
+    base = _get_afriway_base()
+    drive = os.path.splitdrive(base)[0] + os.sep if os.name == 'nt' else '/'
+    probe = drive if os.path.isdir(drive) else os.path.expanduser('~')
+    try:
+        usage = shutil.disk_usage(probe)
+        return jsonify({'total': usage.total, 'used': usage.used, 'free': usage.free, 'drive': drive})
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/analyze-url', methods=['POST'])
@@ -1024,6 +1630,8 @@ def api_download_direct():
         download_sessions[session_id] = {
             'status': 'downloading',
             'progress': 0,
+            'speed': 0,
+            'eta': 0,
             'message': 'Starting download...',
             'type': 'direct',
             'name': filename,
@@ -1056,6 +1664,10 @@ def _download_direct_thread(session_id, url, filename, resume_dir=None, rename_m
             save_dir = os.path.join(afriway_base, _get_type_folder(filename))
         dest = os.path.join(save_dir, filename)
 
+        # Expose the destination folder immediately so "Show in folder" works while downloading
+        download_sessions[session_id]['save_dir'] = save_dir
+        _save_sessions()
+
         # Rename mode: find next available filename (file.txt → file (1).txt → file (2).txt …)
         if rename_mode and not resume_dir and os.path.exists(dest):
             base, ext = os.path.splitext(dest)
@@ -1082,12 +1694,25 @@ def _download_direct_thread(session_id, url, filename, resume_dir=None, rename_m
             downloaded = 0
             total = int(r.headers.get('Content-Length', 0))
 
+        import time as _time
+        _speed_t0 = _time.monotonic()
+        _speed_bytes = 0
         with open(dest, write_mode) as f:
             for chunk in r.iter_content(chunk_size=65536):
                 if chunk:
                     _pause_events.get(session_id, evt).wait()
                     f.write(chunk)
                     downloaded += len(chunk)
+                    _speed_bytes += len(chunk)
+                    _now = _time.monotonic()
+                    _elapsed = _now - _speed_t0
+                    if _elapsed >= 0.5:
+                        speed = _speed_bytes / _elapsed
+                        download_sessions[session_id]['speed'] = round(speed)
+                        if total and speed > 0:
+                            download_sessions[session_id]['eta'] = round((total - downloaded) / speed)
+                        _speed_t0 = _now
+                        _speed_bytes = 0
                     if total:
                         pct = (downloaded / total) * 100
                         download_sessions[session_id]['progress'] = pct
@@ -1122,9 +1747,16 @@ _ARIA2C_INSTALL_HINT = (
 def _run_aria2c(session_id, args):
     """Run aria2c with the given extra args, updating session progress from stdout."""
     afriway_base = _ensure_afriway_dirs()
+    aria2_dest = os.path.join(afriway_base, "Other")
+
+    # Expose the destination folder immediately so "Show in folder" works while downloading
+    if session_id in download_sessions:
+        download_sessions[session_id]['save_dir'] = aria2_dest
+        _save_sessions()
+
     cmd = [
         _ARIA2C_PATH,
-        f'--dir={os.path.join(afriway_base, "Other")}',
+        f'--dir={aria2_dest}',
         '--seed-time=0',        # stop seeding immediately after completion
         '--summary-interval=1', # print summary every second
         '--console-log-level=notice',
@@ -1196,6 +1828,8 @@ def api_download_torrent():
         download_sessions[session_id] = {
             'status': 'downloading',
             'progress': 0,
+            'speed': 0,
+            'eta': 0,
             'message': 'Starting torrent...',
             'type': 'torrent',
             'name': name,
@@ -1225,6 +1859,8 @@ def api_download_video_best():
         download_sessions[session_id] = {
             'status': 'downloading',
             'progress': 0,
+            'speed': 0,
+            'eta': 0,
             'message': 'Starting video download...',
             'type': 'video',
             'name': url.split('/')[-1] or url,
@@ -1267,6 +1903,8 @@ def _download_video_best_thread(session_id, url, save_dir=None):
             except ValueError:
                 pct = 0
             download_sessions[session_id]['progress'] = pct
+            download_sessions[session_id]['speed'] = round(d.get('speed') or 0)
+            download_sessions[session_id]['eta'] = d.get('eta') or 0
             download_sessions[session_id]['message'] = f'Downloading... {pct:.1f}%'
             title = (d.get('info_dict') or {}).get('title', '')
             if title:
@@ -1280,6 +1918,11 @@ def _download_video_best_thread(session_id, url, save_dir=None):
         else:
             afriway_base = _ensure_afriway_dirs()
             save_path = os.path.join(afriway_base, 'Videos')
+
+        # Expose the destination folder immediately so "Show in folder" works while downloading
+        download_sessions[session_id]['save_dir'] = save_path
+        _save_sessions()
+
         ydl_opts = {
             'format': 'bestvideo+bestaudio/best',
             'merge_output_format': 'mp4',
@@ -1291,6 +1934,7 @@ def _download_video_best_thread(session_id, url, save_dir=None):
             'no_warnings': True,
             'logger': _YtdlpLogger(),
             **_yt_cookie_opts(),
+            **_ffmpeg_opts(),
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -1330,9 +1974,14 @@ def api_downloads():
             'url':         s.get('url', ''),
             'status':      s.get('status', 'unknown'),
             'progress':    s.get('progress', 0),
+            'speed':       s.get('speed', 0),
+            'eta':         s.get('eta', 0),
             'message':     s.get('message', ''),
             'filepath':    filepath,
             'file_exists': file_exists,
+            'save_dir':    s.get('save_dir', ''),
+            'is_playlist': s.get('is_playlist', False),
+            'videos':      s.get('videos', []),
         })
     sessions.reverse()
     return jsonify(sessions)
@@ -1507,7 +2156,7 @@ def api_retry(session_id):
     if dtype == 'youtube':
         vfid = meta.get('video_format_id')
         afid = meta.get('audio_format_id')
-        if vfid and afid:
+        if vfid or afid:
             t = threading.Thread(target=_download_thread, args=(
                 session_id, url, meta.get('download_type', 'video'),
                 vfid, afid,
@@ -1667,4 +2316,5 @@ if __name__ == '__main__':
     print("Proudly African - Inspired by Ethiopia")
     print("="*50 + "\n")
 
-    app.run(debug=debug_mode, port=port, host='127.0.0.1', threaded=True)
+    # Bind to 0.0.0.0 so the Afriway mobile companion can reach this server over LAN
+    app.run(debug=debug_mode, port=port, host='0.0.0.0', threaded=True)
