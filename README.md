@@ -36,12 +36,20 @@ Playlists no longer download one video at a time. Up to 4 videos download concur
 
 ### Speed Test
 
-A Cloudflare-powered network speed test, built into the app (⚡ icon in the header):
+A Cloudflare-powered network speed test, built into the app (**Speed Test** button in the header) — starts testing immediately when opened, no extra click needed:
 
-- Ping + jitter, download, and upload — measured in sequence with an animated golden circular gauge
+- Ping + jitter, download, and upload — measured in sequence on an animated golden gauge with a non-linear 0–1000 Mbps scale, matching how real-world connection speeds actually cluster at the low end
+- Everything updates live while the test runs — the gauge, the numbers, and the charts all animate in real time and simply stop moving when the test finishes, instead of being swapped out for a separate results screen
+- **Detailed Result** — a Network Signal indicator (combines ping *and* measured throughput, so a fast-but-throttled connection can't misleadingly show "Strong"), plus live sparkline charts for download and upload with peak values labeled
+- **History** — every result is saved (date, download, upload, ping) in a table, capped at the last 30 runs
+- Your ISP name/IP and the Cloudflare edge server location used are shown, each loading independently the moment it resolves rather than waiting on the other
 - Automatic connection quality rating (Poor → Blazing Fast)
 - Live "Network Usage" panel showing your currently active Afriway downloads and their speeds
 - No external tools or accounts required — runs entirely over HTTPS from the app itself
+
+### Live Speed Indicator
+
+The header always shows a lightweight, continuously updating estimate of your current internet speed (refreshed automatically every 30 seconds) — no need to open the full Speed Test just to check.
 
 ### Free Space
 
@@ -76,6 +84,7 @@ Afriway/
 ### Desktop App Behaviour
 
 - **System tray** — closing the window minimizes to the system tray instead of quitting; right-click the tray icon to reopen or fully exit
+- **Single-instance protection** — launching the app while it's already running shows a clear message instead of silently doing nothing (or worse, connecting to a stale leftover process)
 - **Window memory** — launches centered on screen and remembers your last window size between sessions
 - **Native clipboard bridge** — Copy / Cut / Paste (including the URL field's dedicated copy and paste buttons) go through the OS clipboard directly, avoiding the permission-prompt limitations of an embedded webview
 - **Bundled FFmpeg** — the packaged `.exe` ships with FFmpeg built in, so video+audio merging works out of the box with no separate install
@@ -203,7 +212,7 @@ Every download modal shows the current save location with a **Change** button th
 
 ### Speed Test
 
-Click the **⚡ gauge icon** in the header to open the speed test. Tap **GO** to measure ping, download, and upload speed against Cloudflare's network, then see a quality rating and your currently active downloads' bandwidth usage.
+Click the **Speed Test** button in the header — testing starts immediately. Watch ping, download, and upload measure live on the gauge, then check **Detailed Result** for a signal-quality breakdown with charts, and **History** for your last 30 runs. The header's live speed indicator always shows a lightweight estimate, even without opening this modal.
 
 ### All Downloads Tab
 
@@ -287,6 +296,7 @@ An NSIS installer can be built from `installer.nsi` for a traditional Windows se
 | Paused download won't resume after restart | The app restarts from the last saved position using the original URL and folder |
 | Theme or download location resets on every launch | Make sure `prefs.json` is writable in the app directory (or `%APPDATA%\AfriWayDownloader\` in exe mode) |
 | Folder picker button does nothing | Native folder browsing is only available in the desktop app (`python main.py` or the `.exe`), not when accessed as a plain web page |
+| "Afriway Downloader appears to already be running" | A previous instance is still open — check your system tray for the app icon (right-click → Exit), then launch again |
 
 ---
 
