@@ -39,6 +39,19 @@ def _log(msg):
         except Exception:
             pass
 
+# Make stdout/stderr resilient to non-ASCII (emoji) output regardless of the
+# console's native code page. Plain `python app.py`/`python main.py` in a
+# default Windows terminal uses cp1252, which raises UnicodeEncodeError on any
+# emoji print — an uncaught exception in a background thread (e.g. the emoji
+# status prints in _load_sessions()) silently kills that thread, which for the
+# Flask-startup thread means the server never comes up.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, 'reconfigure'):
+        try:
+            _stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
 # In a windowed frozen exe (console=False), sys.stdout/sys.stderr may be None
 # or a broken handle. yt_dlp writes to them directly — if they are broken the
 # crash bypasses all Python exception handlers. Replace with open(os.devnull)
@@ -261,6 +274,14 @@ def _add_cors(response):
     response.headers['Access-Control-Allow-Origin']  = '*'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    # This is a local desktop app served over localhost — there's no latency to
+    # save by caching, but a stale WebView2 cache silently serving an old
+    # index.html/script.js/style.css after an update is a real, confusing bug
+    # (the packaged exe would keep showing old UI behavior after a rebuild).
+    # Always revalidate everything.
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     return response
 
 @app.route('/api/<path:path>', methods=['OPTIONS'])
@@ -1565,6 +1586,32 @@ def api_disk_space():
         return jsonify({'total': usage.total, 'used': usage.used, 'free': usage.free, 'drive': drive})
     except OSError as e:
         return jsonify({'error': str(e)}), 500
+
+
+SPEED_HISTORY_MAX = 30
+
+
+@app.route('/api/speed-history', methods=['GET'])
+def api_get_speed_history():
+    """Return past speed test results, newest first."""
+    return jsonify({'history': _load_prefs().get('speed_history', [])})
+
+
+@app.route('/api/speed-history', methods=['POST'])
+def api_add_speed_history():
+    """Record a completed speed test result. Newest first, capped at SPEED_HISTORY_MAX."""
+    data = request.json or {}
+    record = {
+        'ts': data.get('ts'),
+        'dl': data.get('dl', 0),
+        'ul': data.get('ul', 0),
+        'ping': data.get('ping', 0),
+        'jitter': data.get('jitter', 0),
+    }
+    history = [record] + _load_prefs().get('speed_history', [])
+    history = history[:SPEED_HISTORY_MAX]
+    _save_prefs({'speed_history': history})
+    return jsonify({'history': history})
 
 
 @app.route('/api/analyze-url', methods=['POST'])

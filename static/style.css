@@ -226,7 +226,10 @@ body {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  min-width: 0;
 }
 
 .status-pill {
@@ -244,8 +247,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
+  gap: 7px;
   height: 38px;
+  padding: 0 14px 0 11px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
@@ -255,7 +259,8 @@ body {
   flex-shrink: 0;
 }
 
-.icon-btn svg { width: 17px; height: 17px; }
+.icon-btn svg { width: 17px; height: 17px; flex-shrink: 0; }
+.icon-btn-label { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 
 .icon-btn:hover {
   background: rgba(201, 162, 39, 0.10);
@@ -495,7 +500,7 @@ body {
   padding: 48px 16px 32px;
   overflow-y: auto;
 }
-.modal::-webkit-scrollbar { width: 6px; }
+.modal::-webkit-scrollbar { width: 10px; }
 .modal::-webkit-scrollbar-thumb {
   background: rgba(201, 162, 39, 0.28);
   border-radius: 999px;
@@ -569,7 +574,7 @@ body {
   overflow-y: auto;
 }
 
-.modal-body::-webkit-scrollbar { width: 6px; }
+.modal-body::-webkit-scrollbar { width: 10px; }
 .modal-body::-webkit-scrollbar-thumb {
   background: rgba(201, 162, 39, 0.28);
   border-radius: 999px;
@@ -974,10 +979,10 @@ select option:hover {
   gap: 10px;
   max-height: 280px;
   overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 10px;
 }
 
-.format-list::-webkit-scrollbar { width: 6px; }
+.format-list::-webkit-scrollbar { width: 10px; }
 .format-list::-webkit-scrollbar-thumb {
   background: rgba(201, 162, 39, 0.28);
   border-radius: 999px;
@@ -1500,6 +1505,10 @@ select option:hover {
 /* ══════════════════════════════════════
    PLAYLIST PROGRESS MODAL
 ══════════════════════════════════════ */
+.pv-panel .modal-body {
+  padding: 18px 24px 22px;
+}
+
 .pv-overall {
   display: flex;
   align-items: center;
@@ -1521,9 +1530,10 @@ select option:hover {
   gap: 10px;
   max-height: 420px;
   overflow-y: auto;
+  padding-right: 10px;
 }
 
-.pv-video-list::-webkit-scrollbar { width: 6px; }
+.pv-video-list::-webkit-scrollbar { width: 10px; }
 .pv-video-list::-webkit-scrollbar-thumb {
   background: rgba(201, 162, 39, 0.28);
   border-radius: 999px;
@@ -1934,10 +1944,10 @@ select option:hover {
   min-width: 0;
   max-height: 340px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 10px;
 }
 
-.dl-formats-col::-webkit-scrollbar { width: 6px; }
+.dl-formats-col::-webkit-scrollbar { width: 10px; }
 .dl-formats-col::-webkit-scrollbar-thumb {
   background: rgba(201, 162, 39, 0.28);
   border-radius: 999px;
@@ -2148,6 +2158,7 @@ select option:hover {
   font-size: 12px;
   color: var(--text-muted);
   margin: -4px 0 10px;
+  padding: 0 20px;
 }
 
 .speed-phase {
@@ -2157,43 +2168,6 @@ select option:hover {
   padding: 12px 20px 26px;
   text-align: center;
 }
-
-/* Idle — GO button */
-.speed-go-btn {
-  width: 160px;
-  height: 160px;
-  border-radius: 50%;
-  border: 3px solid var(--gold-brand);
-  background: radial-gradient(circle at 32% 30%, rgba(223, 176, 58, 0.22), rgba(201, 162, 39, 0.05) 72%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  cursor: pointer;
-  font-family: inherit;
-  animation: speedGoPulse 2.4s ease-in-out infinite;
-  transition: transform 0.2s;
-}
-.speed-go-btn:hover  { transform: scale(1.04); }
-.speed-go-btn:active { transform: scale(0.97); }
-
-.speed-go-text {
-  font-size: 34px;
-  font-weight: 900;
-  color: var(--gold-brand-strong);
-  letter-spacing: 2px;
-}
-.speed-go-sub {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-weight: 600;
-}
-@keyframes speedGoPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(201, 162, 39, 0.35), 0 8px 30px rgba(201, 162, 39, 0.20); }
-  50%      { box-shadow: 0 0 0 14px rgba(201, 162, 39, 0), 0 8px 34px rgba(201, 162, 39, 0.32); }
-}
-.speed-idle-hint { margin-top: 18px; max-width: 280px; }
 
 /* Running — circular golden gauge */
 .speed-gauge-wrap {
@@ -2205,23 +2179,47 @@ select option:hover {
 .speed-gauge-svg {
   width: 100%;
   height: 100%;
-  transform: rotate(-90deg);
+  /* Rotates the ring's native start point (3 o'clock) to the bottom-left, so the
+     270° sweep leaves a gap at the bottom — matches a classic speedometer face. */
+  transform: rotate(135deg);
   filter: drop-shadow(0 0 14px rgba(201, 162, 39, 0.45));
 }
 .speed-gauge-track {
   fill: none;
   stroke: rgba(255, 255, 255, 0.07);
   stroke-width: 14;
+  stroke-linecap: round;
+  /* 270° of a r=95 circle (447.68), then a huge gap so it never repeats */
+  stroke-dasharray: 447.68 596.9;
 }
 .speed-gauge-arc {
   fill: none;
   stroke: url(#goldGaugeGrad);
   stroke-width: 14;
   stroke-linecap: round;
-  stroke-dasharray: 596.9;
-  stroke-dashoffset: 596.9;
+  stroke-dasharray: 447.68 596.9;
+  stroke-dashoffset: 447.68;
   transition: stroke-dashoffset 0.35s ease;
 }
+.speed-gauge-ticks { position: absolute; inset: 0; pointer-events: none; }
+.speed-gauge-tick {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  transform: translate(-50%, -50%);
+}
+/* Positioned along the same 270° sweep as the arc, non-linearly spaced (matches
+   how most home connections cluster at the low end of the scale). */
+.speed-gauge-tick--v0    { left: 15.3%; top: 84.7%; }
+.speed-gauge-tick--v5    { left: 1.9%;  top: 59.6%; }
+.speed-gauge-tick--v10   { left: 4.6%;  top: 31.2%; }
+.speed-gauge-tick--v50   { left: 22.7%; top: 9.2%;  }
+.speed-gauge-tick--v100  { left: 50%;   top: 0.9%;  }
+.speed-gauge-tick--v250  { left: 77.3%; top: 9.2%;  }
+.speed-gauge-tick--v500  { left: 95.4%; top: 31.2%; }
+.speed-gauge-tick--v750  { left: 98.1%; top: 59.6%; }
+.speed-gauge-tick--v1000 { left: 84.7%; top: 84.7%; }
 .speed-gauge-center {
   position: absolute;
   inset: 0;
@@ -2360,7 +2358,179 @@ select option:hover {
 }
 .speed-usage-meta { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 
+/* ── Network info: client ISP + Cloudflare edge server used ── */
+.speed-net-info {
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.speed-net-info-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
+.speed-net-info-icon { font-size: 15px; flex-shrink: 0; }
+.speed-net-info-text { min-width: 0; text-align: left; }
+.speed-net-info-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.speed-net-info-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.speed-net-info-name.skeleton, .speed-net-info-sub.skeleton { width: 80%; }
+.speed-net-info-name.skeleton { height: 13px; }
+.speed-net-info-sub.skeleton  { height: 11px; width: 60%; }
+
 .speed-again-btn { width: 100%; }
+
+/* ── Detailed Result ── */
+.speed-section-title {
+  width: 100%;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 18px 0 10px;
+  text-align: left;
+}
+
+.speed-detail-card {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-surface);
+  overflow: hidden;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.speed-detail-card-title {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  padding: 14px 16px 8px;
+}
+
+.speed-signal-wrap { padding: 0 16px 16px; }
+.speed-signal-track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-surface-hover);
+  margin-bottom: 10px;
+}
+.speed-signal-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--gold-brand);
+  transition: width 0.3s;
+}
+.speed-signal-dot {
+  position: absolute;
+  top: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-soft);
+  border: 2px solid var(--border-strong);
+  transform: translateX(-50%);
+}
+.speed-signal-dot:last-child { transform: translateX(-100%); }
+.speed-signal-dot:first-child { transform: translateX(0); }
+.speed-signal-dot--active { background: var(--gold-brand); border-color: var(--gold-brand); }
+.speed-signal-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.speed-signal-labels .speed-signal-label--active { color: var(--gold-brand); }
+
+.speed-detail-section { padding: 0 16px 16px; }
+.speed-detail-top-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.speed-detail-icon { font-size: 13px; flex-shrink: 0; }
+.speed-detail-label { font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+.speed-detail-data-used { margin-left: auto; font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+.speed-detail-big-val { font-size: 32px; font-weight: 900; line-height: 1.1; color: var(--text-primary); margin-bottom: 6px; }
+.speed-detail-big-unit { font-size: 15px; font-weight: 600; color: var(--text-secondary); }
+.speed-wave-wrap { position: relative; }
+.speed-wave-svg { display: block; width: calc(100% + 32px); height: 46px; margin: 0 -16px; }
+.speed-wave-peak {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+.speed-detail-divider { height: 1px; background: var(--border); margin: 0 16px; }
+.speed-detail-pending { font-size: 12px; color: var(--text-muted); text-align: center; padding: 16px; }
+
+/* ── History ── */
+.speed-history-wrap {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-surface);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.speed-history-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.6;
+  padding: 20px 16px;
+}
+.speed-history-row {
+  display: flex;
+}
+.speed-history-row--head { background: var(--bg-surface-hover); border-bottom: 1px solid var(--border); }
+.speed-history-row:not(.speed-history-row--head) { border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.speed-history-row:last-child { border-bottom: none; }
+.speed-history-header-cell {
+  flex: 1;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 8px 6px;
+  text-align: center;
+}
+.speed-history-cell {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  padding: 10px 6px;
+  text-align: center;
+}
+.speed-history-cell--gold  { color: var(--gold-brand); }
+.speed-history-cell--green { color: var(--green-brand-light); }
 
 /* ══════════════════════════════════════
    UTILITIES

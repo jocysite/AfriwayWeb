@@ -1474,11 +1474,17 @@ async function writeClipboardText(text) {
 // ══════════════════════════════════════════════════
 // Speed Test
 // ══════════════════════════════════════════════════
-const CF_TRACE = 'https://speed.cloudflare.com/cdn-cgi/trace';
-const CF_DOWN  = 'https://speed.cloudflare.com/__down?bytes=26214400'; // 25 MB
-const CF_UP    = 'https://speed.cloudflare.com/__up';
-const SPEED_GAUGE_MAX  = 300;   // Mbps that fills the gauge to 100%
-const SPEED_GAUGE_CIRC = 596.9; // 2 * PI * 95 — matches the SVG ring radius
+const CF_TRACE     = 'https://speed.cloudflare.com/cdn-cgi/trace';
+const CF_DOWN      = 'https://speed.cloudflare.com/__down?bytes=26214400'; // 25 MB
+const CF_UP        = 'https://speed.cloudflare.com/__up';
+const CF_LIVE_DOWN = 'https://speed.cloudflare.com/__down?bytes=2097152';  // 2 MB — lightweight ambient probe
+const SPEED_GAUGE_R        = 95;
+const SPEED_GAUGE_CIRC     = 2 * Math.PI * SPEED_GAUGE_R;        // ~596.9 — full circle
+const SPEED_GAUGE_SWEEP    = 270;                                 // degrees the gauge actually spans
+const SPEED_GAUGE_ARC_LEN  = SPEED_GAUGE_CIRC * (SPEED_GAUGE_SWEEP / 360); // ~447.68
+// Non-linear scale so common home-broadband speeds (the low end) get more of the
+// dial, matching a typical speedometer-style speed test rather than a linear one.
+const SPEED_GAUGE_TICKS = [0, 5, 10, 50, 100, 250, 500, 750, 1000];
 
 let speedAbort = null;
 
@@ -1486,7 +1492,8 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function openSpeedTest() {
   document.getElementById("speedTestModal").classList.remove("hidden");
-  resetSpeedTest();
+  loadSpeedHistory();
+  startSpeedTest();
 }
 
 function closeSpeedTest() {
@@ -1499,32 +1506,39 @@ function cancelSpeedTest() {
   closeSpeedTest();
 }
 
-function resetSpeedTest() {
-  showSpeedPhase("Idle");
-  const isp = document.getElementById("speedIsp");
-  isp.classList.add("hidden");
-  isp.textContent = "";
-  setGaugeValue(0);
-}
-
 function showSpeedPhase(suffix) {
-  ["Idle", "Running", "Error", "Done"].forEach(s => {
+  ["Error", "Active"].forEach(s => {
     document.getElementById("speed" + s).classList.toggle("hidden", s !== suffix);
   });
+}
+
+function mbpsToGaugePct(mbps) {
+  const v     = Math.max(0, mbps);
+  const ticks = SPEED_GAUGE_TICKS;
+  if (v >= ticks[ticks.length - 1]) return 1;
+  for (let i = 0; i < ticks.length - 1; i++) {
+    if (v <= ticks[i + 1]) {
+      const segFrac = (v - ticks[i]) / (ticks[i + 1] - ticks[i]);
+      return (i + segFrac) / (ticks.length - 1);
+    }
+  }
+  return 1;
 }
 
 function setGaugeValue(mbps) {
   const arc   = document.getElementById("speedGaugeArc");
   const value = document.getElementById("speedGaugeValue");
-  const pct   = Math.min(Math.max(mbps, 0) / SPEED_GAUGE_MAX, 1);
-  arc.style.strokeDashoffset = SPEED_GAUGE_CIRC * (1 - pct);
+  const pct   = mbpsToGaugePct(mbps);
+  arc.style.strokeDashoffset = SPEED_GAUGE_ARC_LEN * (1 - pct);
   value.textContent = mbps >= 10 ? mbps.toFixed(1) : mbps > 0 ? mbps.toFixed(2) : "0.0";
 }
 
 // ── Ping + ISP (Cloudflare trace) ──
-async function measureSpeedPing(signal) {
+// onInfo fires as soon as the first round replies — the caller can show
+// ISP/server info immediately instead of waiting for all 5 ping rounds.
+async function measureSpeedPing(signal, onInfo) {
   const rtts = [];
-  let isp = "";
+  let colo = "";
   for (let i = 0; i < 5; i++) {
     if (signal.aborted) break;
     try {
@@ -1532,19 +1546,101 @@ async function measureSpeedPing(signal) {
       const resp = await fetch(CF_TRACE, { cache: "no-store", signal });
       rtts.push(Date.now() - t0);
       if (i === 0) {
-        const text = await resp.text();
-        const ispM = text.match(/^org=(.+)$/m);
-        if (ispM) isp = ispM[1].replace(/^AS\d+\s*/, "");
+        // Cloudflare's trace endpoint doesn't reliably include an ISP org
+        // name (confirmed empty for plenty of real connections) — colo (the
+        // edge datacenter code) is the one field it does consistently have.
+        const text  = await resp.text();
+        const coloM = text.match(/^colo=(.+)$/m);
+        if (coloM) colo = coloM[1];
+        if (onInfo) onInfo({ colo });
       }
     } catch (_) { /* ignore individual failures */ }
     if (i < 4) await sleep(100);
   }
-  if (rtts.length === 0) return { ping: 0, jitter: 0, isp: "" };
+  if (rtts.length === 0) return { ping: 0, jitter: 0, colo: "" };
   const avg    = rtts.reduce((a, b) => a + b, 0) / rtts.length;
   const jitter = rtts.length > 1
     ? rtts.slice(1).reduce((s, r, i) => s + Math.abs(r - rtts[i]), 0) / (rtts.length - 1)
     : 0;
-  return { ping: Math.round(avg), jitter: Math.round(jitter), isp };
+  return { ping: Math.round(avg), jitter: Math.round(jitter), colo };
+}
+
+// Cloudflare's `colo` trace field is a standard IATA airport code identifying
+// which edge datacenter served the request — map the common ones to a city.
+const CF_COLO_CITY = {
+  ADD: "Addis Ababa", NBO: "Nairobi", JNB: "Johannesburg", CPT: "Cape Town",
+  CAI: "Cairo", LOS: "Lagos", ACC: "Accra", DAR: "Dar es Salaam", KGL: "Kigali",
+  MRU: "Port Louis", TUN: "Tunis", CMN: "Casablanca", DJI: "Djibouti",
+  LHR: "London", CDG: "Paris", FRA: "Frankfurt", AMS: "Amsterdam", MAD: "Madrid",
+  MXP: "Milan", VIE: "Vienna", WAW: "Warsaw", ARN: "Stockholm", CPH: "Copenhagen",
+  DUB: "Dublin", ZRH: "Zurich", BRU: "Brussels", LIS: "Lisbon", ATH: "Athens",
+  IST: "Istanbul", DXB: "Dubai", DOH: "Doha", RUH: "Riyadh", TLV: "Tel Aviv",
+  BOM: "Mumbai", DEL: "Delhi", BLR: "Bengaluru", MAA: "Chennai", CCU: "Kolkata",
+  SIN: "Singapore", HKG: "Hong Kong", NRT: "Tokyo", ICN: "Seoul", TPE: "Taipei",
+  BKK: "Bangkok", KUL: "Kuala Lumpur", CGK: "Jakarta", MNL: "Manila", SYD: "Sydney",
+  MEL: "Melbourne", AKL: "Auckland", JFK: "New York", EWR: "Newark",
+  IAD: "Washington D.C.", ATL: "Atlanta", ORD: "Chicago", DFW: "Dallas",
+  LAX: "Los Angeles", SJC: "San Jose", SEA: "Seattle", MIA: "Miami",
+  YYZ: "Toronto", YVR: "Vancouver", GRU: "São Paulo", GIG: "Rio de Janeiro",
+  EZE: "Buenos Aires", SCL: "Santiago", BOG: "Bogotá", LIM: "Lima", MEX: "Mexico City",
+};
+
+function resolveColoLocation(colo) {
+  if (!colo) return "";
+  return CF_COLO_CITY[colo] || `Cloudflare edge (${colo})`;
+}
+
+// Shows shimmering placeholders the instant a test starts, before any network
+// data has actually arrived — replaced live by updateSpeedNetInfoLive() the
+// moment the first ping round resolves (it doesn't wait for all 5 rounds).
+function resetSpeedNetInfoSkeleton() {
+  const box = document.getElementById("speedNetInfo");
+  if (!box) return;
+  box.classList.remove("hidden");
+  [["speedIspName", "70%"], ["speedIspIp", "50%"], ["speedServerName", "70%"], ["speedServerLoc", "50%"]]
+    .forEach(([id, w]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = "";
+      el.style.width = w;
+      el.classList.add("skeleton", "skeleton-text");
+    });
+}
+
+function setSpeedNetInfoText(id, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove("skeleton", "skeleton-text");
+  el.style.width = "";
+  el.textContent = text;
+}
+
+// Independent of the ping/colo lookup below — updates the moment ipapi.co
+// responds, whether that's before or after the Cloudflare trace resolves.
+async function fetchIspInfo(signal) {
+  try {
+    const res  = await fetch("https://ipapi.co/json/", { cache: "no-store", signal });
+    const data = await res.json();
+    setSpeedNetInfoText("speedIspName", data.org || "Unknown ISP");
+    setSpeedNetInfoText("speedIspIp", data.ip || "—");
+  } catch (_) {
+    setSpeedNetInfoText("speedIspName", "Unknown ISP");
+    setSpeedNetInfoText("speedIspIp", "—");
+  }
+}
+
+function updateSpeedServerLive(colo) {
+  setSpeedNetInfoText("speedServerName", "Cloudflare");
+  setSpeedNetInfoText("speedServerLoc", resolveColoLocation(colo) || "—");
+}
+
+// Averages the top half of collected samples — filters out TCP slow-start noise
+// without needing a minimum absolute speed, so a very slow but real connection
+// (a few KB/s or even B/s) still produces a legitimate reading instead of "0".
+function averageTopHalf(readings) {
+  const sorted = [...readings].sort((a, b) => b - a);
+  const top    = sorted.slice(0, Math.ceil(sorted.length / 2));
+  return top.reduce((a, b) => a + b) / top.length;
 }
 
 // ── Download speed ──
@@ -1573,15 +1669,22 @@ function measureSpeedDownload(onProgress, signal) {
     xhr.onload = () => {
       if (readings.length === 0) {
         const elapsed = (Date.now() - t0) / 1000;
-        resolve(Math.round((26 * 8) / elapsed * 10) / 10);
+        resolve({ mbps: elapsed > 0 ? (26 * 8) / elapsed : 0, readings: [] });
         return;
       }
-      const sorted = [...readings].sort((a, b) => b - a);
-      const top    = sorted.slice(0, Math.ceil(sorted.length / 2));
-      resolve(Math.round((top.reduce((a, b) => a + b) / top.length) * 10) / 10);
+      resolve({ mbps: averageTopHalf(readings), readings });
     };
-    xhr.onerror   = () => reject(new Error("No internet connection. Check your network."));
-    xhr.ontimeout = () => reject(new Error("Connection timed out."));
+    // A very slow connection can legitimately never finish (or reset) within the
+    // timeout — as long as we captured at least one real sample, report that
+    // instead of failing the whole test outright.
+    xhr.onerror = () => {
+      if (readings.length > 0) { resolve({ mbps: averageTopHalf(readings), readings }); return; }
+      reject(new Error("No internet connection. Check your network."));
+    };
+    xhr.ontimeout = () => {
+      if (readings.length > 0) { resolve({ mbps: averageTopHalf(readings), readings }); return; }
+      reject(new Error("Connection is too slow to measure. Try again."));
+    };
     xhr.timeout   = 35000;
     signal.addEventListener("abort", () => { xhr.abort(); reject(new Error("Aborted")); });
     xhr.send();
@@ -1618,20 +1721,25 @@ function measureSpeedUpload(onProgress, signal) {
     };
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {
+        if (readings.length > 0) { resolve({ mbps: averageTopHalf(readings), readings }); return; }
         reject(new Error(`Upload test failed (HTTP ${xhr.status}).`));
         return;
       }
       if (readings.length === 0) {
         const elapsed = (Date.now() - t0) / 1000;
-        resolve(Math.round((SIZE * 8) / (1024 * 1024 * elapsed) * 10) / 10);
+        resolve({ mbps: elapsed > 0 ? (SIZE * 8) / (1024 * 1024 * elapsed) : 0, readings: [] });
         return;
       }
-      const sorted = [...readings].sort((a, b) => b - a);
-      const top    = sorted.slice(0, Math.ceil(sorted.length / 2));
-      resolve(Math.round((top.reduce((a, b) => a + b) / top.length) * 10) / 10);
+      resolve({ mbps: averageTopHalf(readings), readings });
     };
-    xhr.onerror   = () => reject(new Error("Upload test failed. Check your network."));
-    xhr.ontimeout = () => reject(new Error("Upload timed out."));
+    xhr.onerror = () => {
+      if (readings.length > 0) { resolve({ mbps: averageTopHalf(readings), readings }); return; }
+      reject(new Error("Upload test failed. Check your network."));
+    };
+    xhr.ontimeout = () => {
+      if (readings.length > 0) { resolve({ mbps: averageTopHalf(readings), readings }); return; }
+      reject(new Error("Upload is too slow to measure. Try again."));
+    };
     xhr.timeout   = 30000;
     signal.addEventListener("abort", () => { xhr.abort(); reject(new Error("Aborted")); });
     xhr.send(body);
@@ -1652,44 +1760,69 @@ async function startSpeedTest() {
   const abort = new AbortController();
   speedAbort  = abort;
 
-  showSpeedPhase("Running");
+  showSpeedPhase("Active");
   setGaugeValue(0);
   document.getElementById("speedProgressTrack").classList.add("hidden");
   document.getElementById("speedProgressFill").style.width = "0%";
   document.getElementById("speedPhaseLabel").textContent = "Testing Latency…";
-  document.getElementById("speedIsp").classList.add("hidden");
+  document.getElementById("speedCancelBtn").classList.remove("hidden");
+  document.getElementById("speedAgainBtn").classList.add("hidden");
+  document.getElementById("speedRating").classList.add("hidden");
+  document.getElementById("speedResultPing").textContent   = "—";
+  document.getElementById("speedResultJitter").textContent = "";
+  document.getElementById("speedResultDown").textContent     = "—";
+  document.getElementById("speedResultDownUnit").textContent = "Mbps";
+  document.getElementById("speedResultUp").textContent       = "—";
+  document.getElementById("speedResultUpUnit").textContent   = "Mbps";
+  document.getElementById("speedSignal").innerHTML     = `<p class="speed-detail-pending">Measuring…</p>`;
+  document.getElementById("speedDetailDown").innerHTML = `<p class="speed-detail-pending">Waiting for download test…</p>`;
+  document.getElementById("speedDetailUp").innerHTML   = `<p class="speed-detail-pending">Waiting for upload test…</p>`;
+  resetSpeedNetInfoSkeleton();
+  // Independent lookup — updates the ISP card the moment it resolves rather
+  // than waiting on (or being blocked by) the ping/download/upload sequence.
+  fetchIspInfo(abort.signal);
 
   try {
-    const p = await measureSpeedPing(abort.signal);
+    const p = await measureSpeedPing(abort.signal, (info) => updateSpeedServerLive(info.colo));
     if (abort.signal.aborted) return;
-    if (p.isp) {
-      const isp = document.getElementById("speedIsp");
-      isp.textContent = "📡 " + p.isp;
-      isp.classList.remove("hidden");
-    }
     document.getElementById("speedResultPing").textContent   = p.ping;
     document.getElementById("speedResultJitter").textContent = p.jitter > 0 ? `±${p.jitter}ms` : "";
 
     document.getElementById("speedPhaseLabel").textContent = "DOWNLOAD";
     document.getElementById("speedProgressTrack").classList.remove("hidden");
     setGaugeValue(0);
-    const dl = await measureSpeedDownload((mbps, pct) => {
+    const dlReadingsLive = [];
+    const dlResult = await measureSpeedDownload((mbps, pct) => {
       setGaugeValue(Math.round(mbps * 10) / 10);
       document.getElementById("speedProgressFill").style.width = Math.min(pct * 100, 100) + "%";
+      dlReadingsLive.push(mbps);
+      document.getElementById("speedDetailDown").innerHTML = renderDownloadDetailHtml(mbps, dlReadingsLive);
     }, abort.signal);
     if (abort.signal.aborted) return;
-    document.getElementById("speedResultDown").textContent = dl;
+    const dl = dlResult.mbps;
+    const dlFmt = formatMbpsAuto(dl);
+    document.getElementById("speedResultDown").textContent = dlFmt.value;
+    document.getElementById("speedResultDownUnit").textContent = dlFmt.unit;
+    document.getElementById("speedDetailDown").innerHTML = renderDownloadDetailHtml(dl, dlResult.readings);
+    // Ping and download are both known now — the combined signal reading can settle.
+    document.getElementById("speedSignal").innerHTML = renderNetworkSignalHtml(p.ping, dl);
 
     document.getElementById("speedPhaseLabel").textContent = "UPLOAD";
     setGaugeValue(0);
     document.getElementById("speedProgressFill").style.width = "0%";
     let ul = 0;
+    let ulReadingsFinal = [];
     let uploadFailed = false;
     try {
-      ul = await measureSpeedUpload((mbps, pct) => {
+      const ulReadingsLive = [];
+      const ulResult = await measureSpeedUpload((mbps, pct) => {
         setGaugeValue(Math.round(mbps * 10) / 10);
         document.getElementById("speedProgressFill").style.width = Math.min(pct * 100, 100) + "%";
+        ulReadingsLive.push(mbps);
+        document.getElementById("speedDetailUp").innerHTML = renderUploadDetailHtml(mbps, ulReadingsLive);
       }, abort.signal);
+      ul = ulResult.mbps;
+      ulReadingsFinal = ulResult.readings;
     } catch (e) {
       // Upload failure is non-fatal — ping/download results still stand — but
       // show it plainly instead of a silent, misleading "0".
@@ -1697,10 +1830,24 @@ async function startSpeedTest() {
       console.warn("Upload speed test failed:", e);
     }
     if (abort.signal.aborted) return;
-    document.getElementById("speedResultUp").textContent = uploadFailed ? "—" : ul;
+    const ulFmt = formatMbpsAuto(uploadFailed ? 0 : ul);
+    document.getElementById("speedResultUp").textContent     = uploadFailed ? "—" : ulFmt.value;
+    document.getElementById("speedResultUpUnit").textContent = uploadFailed ? "Mbps" : ulFmt.unit;
+    document.getElementById("speedDetailUp").innerHTML = uploadFailed
+      ? `<p class="speed-detail-pending">Upload test failed.</p>`
+      : renderUploadDetailHtml(ul, ulReadingsFinal);
+
+    // Test finished — the gauge/charts simply stop updating here rather than
+    // being replaced by a separate "done" view, so the last live reading stays
+    // on screen as the result.
+    document.getElementById("speedPhaseLabel").textContent = "Done!";
+    document.getElementById("speedProgressTrack").classList.add("hidden");
+    document.getElementById("speedCancelBtn").classList.add("hidden");
+    document.getElementById("speedAgainBtn").classList.remove("hidden");
+    document.getElementById("speedRating").classList.remove("hidden");
 
     renderSpeedResults(dl);
-    showSpeedPhase("Done");
+    recordSpeedHistory(dl, uploadFailed ? 0 : ul, p.ping, p.jitter);
   } catch (e) {
     if (abort.signal.aborted) return;
     document.getElementById("speedErrorMsg").textContent = e.message || "Speed test failed.";
@@ -1737,11 +1884,201 @@ function renderSpeedNetworkUsage() {
   box.innerHTML = header + rows;
 }
 
+// ══════════════════════════════════════════════════
+// Speed Test — Detailed Result (network signal + per-metric breakdown)
+// ══════════════════════════════════════════════════
+function formatMbpsAuto(mbps) {
+  if (!mbps || mbps <= 0) return { value: "—", unit: "Mb/s" };
+  const bps = mbps * 125000; // 1 Mbps = 125,000 bytes/s
+  if (bps < 1024)              return { value: bps.toFixed(0),                    unit: "B/s"  };
+  if (bps < 1048576)           return { value: (bps / 1024).toFixed(0),           unit: "KB/s" };
+  if (bps < 1073741824)        return { value: (bps / 1048576).toFixed(1),        unit: "MB/s" };
+  return                              { value: (bps / 1073741824).toFixed(2),     unit: "GB/s" };
+}
+
+function buildWaveSvg(readings, color, height = 46) {
+  const width = 100;
+  if (!readings || readings.length < 2) {
+    return `<div class="speed-wave-wrap"><svg viewBox="0 0 ${width} ${height}" class="speed-wave-svg" preserveAspectRatio="none"></svg></div>`;
+  }
+  const recent = readings.slice(-80);
+  const max    = Math.max(...recent, 0.001);
+  const stepX  = width / (recent.length - 1);
+  const pts    = recent.map((v, i) => ({
+    x: i * stepX,
+    y: height - (v / max) * (height - 4) - 2,
+  }));
+
+  let line = `M ${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+  for (let i = 1; i < pts.length; i++) {
+    const midX = (pts[i - 1].x + pts[i].x) / 2;
+    const midY = (pts[i - 1].y + pts[i].y) / 2;
+    line += ` Q ${pts[i - 1].x.toFixed(1)},${pts[i - 1].y.toFixed(1)} ${midX.toFixed(1)},${midY.toFixed(1)}`;
+  }
+  line += ` L ${pts[pts.length - 1].x.toFixed(1)},${pts[pts.length - 1].y.toFixed(1)}`;
+  const fill = `${line} L ${pts[pts.length - 1].x.toFixed(1)},${height} L ${pts[0].x.toFixed(1)},${height} Z`;
+
+  const peakFmt = formatMbpsAuto(max);
+  return `
+    <div class="speed-wave-wrap">
+      <span class="speed-wave-peak">peak ${peakFmt.value} ${peakFmt.unit}</span>
+      <svg viewBox="0 0 ${width} ${height}" class="speed-wave-svg" preserveAspectRatio="none">
+        <path d="${fill}" fill="${color}" fill-opacity="0.18" stroke="none"></path>
+        <path d="${line}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round"></path>
+      </svg>
+    </div>
+  `;
+}
+
+function renderNetworkSignalHtml(pingMs, dlMbps) {
+  // Combine latency and actual throughput — a fast ping on a bandwidth-starved
+  // connection shouldn't read as "Strong" while the rating above says "Poor".
+  const pingPct  = pingMs <= 0 ? 50 : pingMs < 50 ? 100 : pingMs < 150 ? 50 : 0;
+  const speedPct = dlMbps >= 25 ? 100 : dlMbps >= 5 ? 50 : 0;
+  const pct      = Math.min(pingPct, speedPct);
+  const label    = pct === 100 ? "Strong" : pct === 50 ? "Normal" : "Weak";
+  return `
+    <div class="speed-signal-track">
+      <div class="speed-signal-fill" style="width:${pct}%"></div>
+      ${[0, 50, 100].map(d => `<div class="speed-signal-dot${d === pct ? " speed-signal-dot--active" : ""}" style="left:${d}%"></div>`).join("")}
+    </div>
+    <div class="speed-signal-labels">
+      <span${label === "Weak"   ? ' class="speed-signal-label--active"' : ""}>Weak</span>
+      <span${label === "Normal" ? ' class="speed-signal-label--active"' : ""}>Normal</span>
+      <span${label === "Strong" ? ' class="speed-signal-label--active"' : ""}>Strong</span>
+    </div>
+  `;
+}
+
+// Called on every progress tick during the download/upload phases (live update)
+// as well as once more with the final averaged value when each phase finishes.
+function renderDownloadDetailHtml(mbps, readings) {
+  const fmt = formatMbpsAuto(mbps);
+  return `
+    <div class="speed-detail-top-row">
+      <span class="speed-detail-icon">⬇️</span>
+      <span class="speed-detail-label">Download</span>
+      <span class="speed-detail-data-used">Data Used 25 MB</span>
+    </div>
+    <div class="speed-detail-big-val">${fmt.value}<span class="speed-detail-big-unit"> ${fmt.unit}</span></div>
+    ${buildWaveSvg(readings, "#C9A227")}
+  `;
+}
+
+function renderUploadDetailHtml(mbps, readings) {
+  const fmt = formatMbpsAuto(mbps);
+  return `
+    <div class="speed-detail-top-row">
+      <span class="speed-detail-icon">⬆️</span>
+      <span class="speed-detail-label">Upload</span>
+      <span class="speed-detail-data-used">Data Used 8 MB</span>
+    </div>
+    <div class="speed-detail-big-val">${fmt.value}<span class="speed-detail-big-unit"> ${fmt.unit}</span></div>
+    ${buildWaveSvg(readings, "#27AE60")}
+  `;
+}
+
+// ══════════════════════════════════════════════════
+// Speed Test — History (persisted server-side, newest first, capped at 30)
+// ══════════════════════════════════════════════════
+async function recordSpeedHistory(dl, ul, ping, jitter) {
+  try {
+    const res  = await fetch("/api/speed-history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ts: Date.now(), dl, ul, ping, jitter }),
+    });
+    const data = await res.json();
+    renderSpeedHistoryTable(data.history || []);
+  } catch (_) {}
+}
+
+async function loadSpeedHistory() {
+  try {
+    const res  = await fetch("/api/speed-history");
+    const data = await res.json();
+    renderSpeedHistoryTable(data.history || []);
+  } catch (_) {
+    renderSpeedHistoryTable([]);
+  }
+}
+
+function formatHistoryDate(ts) {
+  const d   = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return "Today";
+  return `${d.getDate()}-${d.toLocaleString("en", { month: "short" })}`;
+}
+
+function renderSpeedHistoryTable(history) {
+  const box = document.getElementById("speedHistory");
+  if (!box) return;
+  if (!history || history.length === 0) {
+    box.innerHTML = `<p class="speed-history-empty">No history yet.<br>Run a test to start recording.</p>`;
+    return;
+  }
+  const headerRow = `
+    <div class="speed-history-row speed-history-row--head">
+      <span class="speed-history-header-cell">Date</span>
+      <span class="speed-history-header-cell">Download</span>
+      <span class="speed-history-header-cell">Upload</span>
+      <span class="speed-history-header-cell">Ping</span>
+    </div>`;
+  const rows = history.map(rec => {
+    const dl = formatMbpsAuto(rec.dl);
+    const ul = formatMbpsAuto(rec.ul);
+    return `
+      <div class="speed-history-row">
+        <span class="speed-history-cell">${formatHistoryDate(rec.ts)}</span>
+        <span class="speed-history-cell speed-history-cell--gold">${dl.value} ${dl.unit}</span>
+        <span class="speed-history-cell speed-history-cell--green">${ul.value} ${ul.unit}</span>
+        <span class="speed-history-cell">${rec.ping}ms</span>
+      </div>`;
+  }).join("");
+  box.innerHTML = headerRow + rows;
+}
+
 document.getElementById("speedTestBtn").addEventListener("click", openSpeedTest);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeSpeedTest(); });
+
+// ══════════════════════════════════════════════════
+// Live internet speed — shown in the header, refreshed continuously
+// ══════════════════════════════════════════════════
+async function measureLiveSpeed() {
+  const controller = new AbortController();
+  const killTimer  = setTimeout(() => controller.abort(), 8000);
+  try {
+    const t0  = Date.now();
+    const res = await fetch(CF_LIVE_DOWN, { cache: "no-store", signal: controller.signal });
+    const buf = await res.arrayBuffer();
+    const elapsed = (Date.now() - t0) / 1000;
+    if (elapsed <= 0 || buf.byteLength === 0) return null;
+    return Math.round(((buf.byteLength * 8) / (1024 * 1024 * elapsed)) * 10) / 10;
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(killTimer);
+  }
+}
+
+async function refreshLiveSpeedPill() {
+  const pill = document.getElementById("statusPill");
+  if (!pill) return;
+  // Don't compete with an active full Speed Test run — it already shows a live gauge.
+  if (speedAbort) return;
+  const mbps = await measureLiveSpeed();
+  if (speedAbort) return; // a real test may have started while we were probing
+  pill.textContent = mbps === null ? "📶 Offline?" : `📶 ${mbps >= 10 ? mbps.toFixed(0) : mbps.toFixed(1)} Mbps`;
+}
+
+function startLiveSpeedMonitor() {
+  refreshLiveSpeedPill();
+  setInterval(refreshLiveSpeedPill, 30000);
+}
 
 // ══════════════════════════════════════════════════
 loadDrives();
 refreshAllQueues();
 startQueuePolling();
 loadCookieStatus();
+startLiveSpeedMonitor();

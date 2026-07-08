@@ -329,19 +329,18 @@
         </div>
 
         <div class="modal-body">
-            <p id="speedIsp" class="speed-isp hidden"></p>
 
-            <!-- Idle -->
-            <div id="speedIdle" class="speed-phase">
-                <button type="button" id="speedGoBtn" class="speed-go-btn" onclick="startSpeedTest()">
-                    <span class="speed-go-text">GO</span>
-                    <span class="speed-go-sub">Tap to start</span>
-                </button>
-                <p class="url-hint speed-idle-hint">Tests download, upload, and latency using Cloudflare's network.</p>
+            <!-- Error -->
+            <div id="speedError" class="speed-phase hidden">
+                <div class="speed-error-icon">📡</div>
+                <p id="speedErrorMsg" class="speed-error-msg"></p>
+                <button type="button" class="btn btn-primary speed-retry-btn" onclick="startSpeedTest()">Try Again</button>
             </div>
 
-            <!-- Running (ping / download / upload) -->
-            <div id="speedRunning" class="speed-phase hidden">
+            <!-- Active — running and done share this view; the gauge and every
+                 section stay visible the whole time and simply update live, so
+                 nothing gets swapped out when the test finishes. -->
+            <div id="speedActive" class="speed-phase hidden">
                 <div class="speed-gauge-wrap">
                     <svg viewBox="0 0 220 220" class="speed-gauge-svg">
                         <defs>
@@ -354,6 +353,17 @@
                         <circle class="speed-gauge-track" cx="110" cy="110" r="95"></circle>
                         <circle id="speedGaugeArc" class="speed-gauge-arc" cx="110" cy="110" r="95"></circle>
                     </svg>
+                    <div class="speed-gauge-ticks">
+                        <span class="speed-gauge-tick speed-gauge-tick--v0">0</span>
+                        <span class="speed-gauge-tick speed-gauge-tick--v5">5</span>
+                        <span class="speed-gauge-tick speed-gauge-tick--v10">10</span>
+                        <span class="speed-gauge-tick speed-gauge-tick--v50">50</span>
+                        <span class="speed-gauge-tick speed-gauge-tick--v100">100</span>
+                        <span class="speed-gauge-tick speed-gauge-tick--v250">250</span>
+                        <span class="speed-gauge-tick speed-gauge-tick--v500">500</span>
+                        <span class="speed-gauge-tick speed-gauge-tick--v750">750</span>
+                        <span class="speed-gauge-tick speed-gauge-tick--v1000">1000</span>
+                    </div>
                     <div class="speed-gauge-center">
                         <div id="speedGaugeValue" class="speed-gauge-value">0.0</div>
                         <div class="speed-gauge-unit">Mbps</div>
@@ -367,42 +377,66 @@
                 <div id="speedProgressTrack" class="speed-progress-track hidden">
                     <div id="speedProgressFill" class="speed-progress-fill"></div>
                 </div>
-                <button type="button" class="btn-action btn-action--remove speed-cancel-btn" onclick="cancelSpeedTest()">✕ Cancel</button>
-            </div>
+                <button type="button" id="speedCancelBtn" class="btn-action btn-action--remove speed-cancel-btn" onclick="cancelSpeedTest()">✕ Cancel</button>
 
-            <!-- Error -->
-            <div id="speedError" class="speed-phase hidden">
-                <div class="speed-error-icon">📡</div>
-                <p id="speedErrorMsg" class="speed-error-msg"></p>
-                <button type="button" class="btn btn-primary speed-retry-btn" onclick="startSpeedTest()">Try Again</button>
-            </div>
-
-            <!-- Done -->
-            <div id="speedDone" class="speed-phase hidden">
                 <div class="speed-result-row">
                     <div class="speed-result-chip">
-                        <div id="speedResultPing" class="speed-result-val">0</div>
+                        <div id="speedResultPing" class="speed-result-val">—</div>
                         <div class="speed-result-unit">ms</div>
                         <div class="speed-result-lbl">PING</div>
                         <div id="speedResultJitter" class="speed-result-jitter"></div>
                     </div>
                     <div class="speed-result-chip speed-result-chip--main">
-                        <div id="speedResultDown" class="speed-result-val">0</div>
-                        <div class="speed-result-unit">Mbps</div>
+                        <div id="speedResultDown" class="speed-result-val">—</div>
+                        <div id="speedResultDownUnit" class="speed-result-unit">Mbps</div>
                         <div class="speed-result-lbl">↓ DOWNLOAD</div>
                     </div>
                     <div class="speed-result-chip">
-                        <div id="speedResultUp" class="speed-result-val">0</div>
-                        <div class="speed-result-unit">Mbps</div>
+                        <div id="speedResultUp" class="speed-result-val">—</div>
+                        <div id="speedResultUpUnit" class="speed-result-unit">Mbps</div>
                         <div class="speed-result-lbl">↑ UPLOAD</div>
                     </div>
                 </div>
 
-                <div id="speedRating" class="speed-rating"></div>
+                <div id="speedNetInfo" class="speed-net-info hidden">
+                    <div class="speed-net-info-item">
+                        <span class="speed-net-info-icon">👤</span>
+                        <div class="speed-net-info-text">
+                            <div id="speedIspName" class="speed-net-info-name skeleton skeleton-text"></div>
+                            <div id="speedIspIp" class="speed-net-info-sub skeleton skeleton-text"></div>
+                        </div>
+                    </div>
+                    <div class="speed-net-info-item">
+                        <span class="speed-net-info-icon">🌐</span>
+                        <div class="speed-net-info-text">
+                            <div id="speedServerName" class="speed-net-info-name skeleton skeleton-text"></div>
+                            <div id="speedServerLoc" class="speed-net-info-sub skeleton skeleton-text"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="speedRating" class="speed-rating hidden"></div>
 
                 <div id="speedActiveDownloads" class="speed-network-usage"></div>
 
-                <button type="button" class="btn btn-secondary speed-again-btn" onclick="startSpeedTest()">↺ Test Again</button>
+                <!-- Detailed Result — present from the start, fills in live -->
+                <p class="speed-section-title">📋 Detailed Result</p>
+                <div class="speed-detail-card">
+                    <p class="speed-detail-card-title">Network Signal</p>
+                    <div id="speedSignal" class="speed-signal-wrap"><p class="speed-detail-pending">Measuring…</p></div>
+                </div>
+                <div class="speed-detail-card">
+                    <p class="speed-detail-card-title">Speed</p>
+                    <div id="speedDetailDown" class="speed-detail-section"><p class="speed-detail-pending">Waiting for download test…</p></div>
+                    <div class="speed-detail-divider"></div>
+                    <div id="speedDetailUp" class="speed-detail-section"><p class="speed-detail-pending">Waiting for upload test…</p></div>
+                </div>
+
+                <!-- History -->
+                <p class="speed-section-title">🕓 History</p>
+                <div id="speedHistory" class="speed-history-wrap"></div>
+
+                <button type="button" id="speedAgainBtn" class="btn btn-secondary speed-again-btn hidden" onclick="startSpeedTest()">↺ Test Again</button>
             </div>
         </div>
 
@@ -426,7 +460,7 @@
             </div>
         </div>
         <div class="header-right">
-            <span class="status-pill" id="statusPill">⚡ Ready</span>
+            <span class="status-pill" id="statusPill" title="Live internet speed">📶 Checking…</span>
 
             <!-- Theme picker -->
             <div class="theme-wrapper" id="themeWrapper">
@@ -441,6 +475,7 @@
                         <circle cx="6.5"  cy="12.5" r=".5" fill="currentColor" stroke="none"/>
                         <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.437-.652-.437-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>
                     </svg>
+                    <span class="icon-btn-label">Theme</span>
                 </button>
                 <div class="theme-menu hidden" id="themeMenu">
                     <button type="button" class="theme-opt" data-theme="default" onclick="setTheme('default')">
@@ -462,6 +497,7 @@
                     <path d="m12 14 4-4"></path>
                     <path d="M3.34 19a10 10 0 1 1 17.32 0"></path>
                 </svg>
+                <span class="icon-btn-label">Speed Test</span>
             </button>
 
             <!-- Settings -->
@@ -471,6 +507,7 @@
                     <circle cx="12" cy="12" r="3"></circle>
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
                 </svg>
+                <span class="icon-btn-label">Settings</span>
             </button>
         </div>
     </header>
