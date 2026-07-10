@@ -150,8 +150,8 @@ pip install -r requirements.txt
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/jocysite/Afriway-Downloader.git
-cd Afriway-Downloader
+git clone https://github.com/jocysite/AfriwayWeb.git
+cd AfriwayWeb
 
 # 2. (Recommended) Create a virtual environment
 python -m venv .venv
@@ -232,7 +232,7 @@ Click the **palette icon** in the header to switch between **Default**, **Dark**
 ## Project Structure
 
 ```
-Afriway-Downloader/
+AfriwayWeb/
 ├── app.py                  # Flask backend — routes, download threads, session management
 ├── main.py                 # pywebview entry point — window, system tray, native folder picker
 ├── rthook_afriway.py       # Runtime hook patching paths inside the frozen exe
